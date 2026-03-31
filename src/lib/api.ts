@@ -1,27 +1,40 @@
 import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
+// Optional: use env later if needed
+// const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
 const API = axios.create({
   baseURL: "https://dagidev-teleexamai.hf.space",
 });
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("access_token");
+
+// =======================
+// REQUEST INTERCEPTOR
+// =======================
+
+API.interceptors.request.use((config) => {
+  const token = localStorage.getItem("admin_token"); // ✅ FIXED
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
   return config;
 });
 
-api.interceptors.response.use(
+// =======================
+// RESPONSE INTERCEPTOR
+// =======================
+
+API.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem("access_token");
+      localStorage.removeItem("admin_token"); // ✅ FIXED
       window.location.href = "/login";
     }
+
     return Promise.reject(error);
   }
 );
 
-export default api;
+export default API;
