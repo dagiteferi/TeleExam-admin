@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { decodeToken, clearToken, setToken, Permission } from "@/lib/auth";
+import { decodeToken, clearToken, setToken, getToken, Permission } from "@/lib/auth";
 
 interface AuthUser {
   email: string;
@@ -20,15 +20,16 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
     const decoded = decodeToken();
-    return decoded ? { email: decoded.email, permissions: decoded.permissions } : null;
+    if (decoded) return { email: decoded.email ?? "", permissions: decoded.permissions ?? [] };
+    // If we have a token but can't decode claims, keep session "logged in"
+    // and treat permissions as empty until we can decode or fetch profile info.
+    return getToken() ? { email: "", permissions: [] } : null;
   });
 
   const login = useCallback((token: string) => {
     setToken(token);
     const decoded = decodeToken();
-    if (decoded) {
-      setUser({ email: decoded.email, permissions: decoded.permissions });
-    }
+    setUser(decoded ? { email: decoded.email ?? "", permissions: decoded.permissions ?? [] } : { email: "", permissions: [] });
   }, []);
 
   const logout = useCallback(() => {
@@ -51,15 +52,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const interval = setInterval(() => {
       const decoded = decodeToken();
-      if (!decoded && user) {
-        setUser(null);
-      }
+      const token = getToken();
+      // Only log out if the token is gone (manual logout / cleared storage),
+      // or if decodeToken() cleared it due to expiry.
+      if (!token) setUser(null);
+      else if (decoded) setUser({ email: decoded.email ?? "", permissions: decoded.permissions ?? [] });
     }, 60000);
     return () => clearInterval(interval);
   }, [user]);
 
+  const isAuthenticated = !!getToken();
+
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout, hasPermission, isSuperAdmin }}>
+    <AuthContext.Provider value={{ user, isAuthenticated, login, logout, hasPermission, isSuperAdmin }}>
       {children}
     </AuthContext.Provider>
   );

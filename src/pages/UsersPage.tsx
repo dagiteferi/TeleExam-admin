@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,8 @@ import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface User {
-  id: number;
-  telegram_username: string;
+  id: string;
+  telegram_username: string | null;
   is_pro: boolean;
   is_banned: boolean;
   invite_count: number;
@@ -37,18 +37,26 @@ export default function UsersPage() {
   });
   const [actionLoading, setActionLoading] = useState(false);
 
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => (u.telegram_username ?? "").toLowerCase().includes(q));
+  }, [users, search]);
+
   const fetchUsers = useCallback(() => {
     setLoading(true);
     api
-      .get("/admin/users", { params: { limit: LIMIT, offset, search: search || undefined } })
+      .get("/admin/users/", { params: { limit: LIMIT, offset } })
       .then((r) => {
-        setUsers(r.data.items ?? r.data);
-        setTotal(r.data.total ?? r.data.length ?? 0);
+        const data = Array.isArray(r.data) ? (r.data as User[]) : [];
+        setUsers(data);
+        // Backend returns an array (no total). Approximate total for pagination UX.
+        setTotal(offset + data.length + (data.length === LIMIT ? LIMIT : 0));
       })
       .catch(() => {
         // Mock data
         const mock: User[] = Array.from({ length: 10 }, (_, i) => ({
-          id: offset + i + 1,
+          id: crypto.randomUUID(),
           telegram_username: `@user_${offset + i + 1}`,
           is_pro: Math.random() > 0.7,
           is_banned: Math.random() > 0.9,
@@ -58,7 +66,7 @@ export default function UsersPage() {
         setTotal(156);
       })
       .finally(() => setLoading(false));
-  }, [offset, search]);
+  }, [offset]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
@@ -66,8 +74,10 @@ export default function UsersPage() {
     if (!banDialog.user) return;
     setActionLoading(true);
     try {
-      await api.post(`/admin/users/${banDialog.user.id}/ban`, { reason: banDialog.reason });
-      toast.success(`User ${banDialog.user.telegram_username} has been banned`);
+      await api.post(`/admin/users/${banDialog.user.id}/ban`, undefined, {
+        params: { reason: banDialog.reason.trim() || "Banned by admin" },
+      });
+      toast.success(`User ${banDialog.user.telegram_username ?? banDialog.user.id} has been banned`);
       setBanDialog({ open: false, user: null, reason: "" });
       fetchUsers();
     } catch {
@@ -80,14 +90,14 @@ export default function UsersPage() {
   const handleUnban = async (user: User) => {
     try {
       await api.post(`/admin/users/${user.id}/unban`);
-      toast.success(`User ${user.telegram_username} has been unbanned`);
+      toast.success(`User ${user.telegram_username ?? user.id} has been unbanned`);
       fetchUsers();
     } catch {
       toast.error("Failed to unban user");
     }
   };
 
-  const totalPages = Math.ceil(total / LIMIT);
+  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
   const currentPage = Math.floor(offset / LIMIT) + 1;
 
   return (
@@ -129,17 +139,17 @@ export default function UsersPage() {
                     <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
                   </TableCell>
                 </TableRow>
-              ) : users.length === 0 ? (
+              ) : filteredUsers.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={canBan ? 6 : 5} className="text-center py-8 text-muted-foreground">
                     No users found
                   </TableCell>
                 </TableRow>
               ) : (
-                users.map((user) => (
+                filteredUsers.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell className="font-mono text-xs">{user.id}</TableCell>
-                    <TableCell className="font-medium">{user.telegram_username}</TableCell>
+                    <TableCell className="font-medium">{user.telegram_username ?? "—"}</TableCell>
                     <TableCell>
                       <Badge variant={user.is_pro ? "default" : "secondary"}>
                         {user.is_pro ? "Pro" : "Free"}
@@ -198,7 +208,7 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle>Ban User</DialogTitle>
             <DialogDescription>
-              Are you sure you want to ban <strong>{banDialog.user?.telegram_username}</strong>?
+              Are you sure you want to ban <strong>{banDialog.user?.telegram_username ?? banDialog.user?.id}</strong>?
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">

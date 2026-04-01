@@ -23,9 +23,14 @@ const ALL_PERMISSIONS: { value: Permission; label: string }[] = [
 ];
 
 interface Admin {
+  id: string;
   email: string;
+  role: string;
   permissions: Permission[];
-  is_superadmin: boolean;
+  invited_by_email?: string | null;
+  is_active: boolean;
+  created_at: string;
+  last_login_at?: string | null;
 }
 
 const inviteSchema = z.object({
@@ -57,8 +62,22 @@ export default function AdminsPage() {
       .then((r) => setAdmins(r.data))
       .catch(() => {
         setAdmins([
-          { email: "superadmin@teleexam.ai", permissions: ["*" as Permission], is_superadmin: true },
-          { email: "moderator@teleexam.ai", permissions: ["view_users", "view_stats"], is_superadmin: false },
+          {
+            id: crypto.randomUUID(),
+            email: "superadmin@teleexam.ai",
+            role: "superadmin",
+            permissions: ["view_users", "ban_user", "view_stats", "manage_content"],
+            is_active: true,
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: crypto.randomUUID(),
+            email: "moderator@teleexam.ai",
+            role: "admin",
+            permissions: ["view_users", "view_stats"],
+            is_active: true,
+            created_at: new Date().toISOString(),
+          },
         ]);
       })
       .finally(() => setLoading(false));
@@ -69,8 +88,16 @@ export default function AdminsPage() {
   const onInvite = async (data: InviteForm) => {
     setInviteLoading(true);
     try {
-      await api.post("/admin/auth/invite", { ...data, permissions: invitePerms });
-      toast.success("Admin invited successfully");
+      const params = new URLSearchParams();
+      params.append("email", data.email);
+      params.append("password", data.password);
+      invitePerms.forEach((p) => params.append("permissions", p));
+
+      const resp = await api.post("/admin/auth/invite", params, {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+
+      toast.success(resp.data?.message || "Admin invited successfully");
       setInviteOpen(false);
       reset();
       setInvitePerms([]);
@@ -86,7 +113,7 @@ export default function AdminsPage() {
     if (!editAdmin) return;
     setEditLoading(true);
     try {
-      await api.patch(`/admin/auth/admins/${editAdmin.email}/permissions`, { permissions: editPerms });
+      await api.patch(`/admin/auth/admins/${encodeURIComponent(editAdmin.email)}/permissions`, editPerms);
       toast.success("Permissions updated");
       setEditAdmin(null);
       fetchAdmins();
@@ -136,15 +163,17 @@ export default function AdminsPage() {
                     <TableCell className="font-medium">{admin.email}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {admin.is_superadmin || admin.permissions.includes("*" as Permission) ? (
+                        {admin.role?.toLowerCase() === "superadmin" ? (
                           <Badge>Superadmin</Badge>
-                        ) : (
+                        ) : admin.permissions.length ? (
                           admin.permissions.map((p) => <Badge key={p} variant="secondary">{p}</Badge>)
+                        ) : (
+                          <Badge variant="secondary">No permissions</Badge>
                         )}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      {!admin.is_superadmin && (
+                      {admin.role?.toLowerCase() !== "superadmin" && (
                         <Button
                           variant="ghost"
                           size="sm"
