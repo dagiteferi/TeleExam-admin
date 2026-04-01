@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -7,36 +7,76 @@ import {
 import { Badge } from "@/components/ui/badge";
 import api from "@/lib/api";
 
-const mockDAU = Array.from({ length: 30 }, (_, i) => ({
-  date: new Date(Date.now() - (29 - i) * 86400000).toLocaleDateString("en", { month: "short", day: "numeric" }),
-  count: Math.floor(Math.random() * 300 + 80),
-}));
+type DauChartPoint = { date: string; count: number };
+type ReferralRow = { username: string; invites: number };
+type QuestionRow = { id: string; text: string; attempts: number; accuracy: number };
 
-const mockExams = [
-  { subject: "Mathematics", completed: 4521, avg_score: 72 },
-  { subject: "Physics", completed: 3812, avg_score: 68 },
-  { subject: "Chemistry", completed: 2930, avg_score: 75 },
-  { subject: "Biology", completed: 2104, avg_score: 80 },
-  { subject: "English", completed: 1876, avg_score: 85 },
-];
-
-const mockReferrals = [
-  { username: "@ahmed_top", invites: 142 },
-  { username: "@sara_study", invites: 98 },
-  { username: "@mohamed_k", invites: 87 },
-  { username: "@fatma_ai", invites: 65 },
-  { username: "@ali_exam", invites: 51 },
-];
-
-const mockQuestions = [
-  { id: 1, text: "What is the derivative of x²?", attempts: 8321, accuracy: 89 },
-  { id: 2, text: "Newton's second law states...", attempts: 7654, accuracy: 72 },
-  { id: 3, text: "The pH of pure water is...", attempts: 6190, accuracy: 94 },
-  { id: 4, text: "Mitochondria is known as...", attempts: 5832, accuracy: 97 },
-  { id: 5, text: "Select the correct passive voice...", attempts: 4210, accuracy: 61 },
-];
+function toISODate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
 
 export default function AnalyticsPage() {
+  const [dau, setDau] = useState<DauChartPoint[]>([]);
+  const [examStats, setExamStats] = useState<{ total_exams: number; total_users: number; average_score: number } | null>(null);
+  const [referrals, setReferrals] = useState<ReferralRow[]>([]);
+  const [questions, setQuestions] = useState<QuestionRow[]>([]);
+
+  const examBar = useMemo(() => {
+    if (!examStats) return [];
+    return [
+      { metric: "Total Users", value: examStats.total_users },
+      { metric: "Total Exams", value: examStats.total_exams },
+      { metric: "Avg Score", value: Number(examStats.average_score.toFixed(2)) },
+    ];
+  }, [examStats]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const today = new Date();
+        const start = new Date();
+        start.setDate(today.getDate() - 29);
+
+        const [dauResp, examsResp, referralsResp, questionsResp] = await Promise.all([
+          api.get("/admin/stats/dau", { params: { start_date: toISODate(start), end_date: toISODate(today) } }),
+          api.get("/admin/stats/exams"),
+          api.get("/admin/stats/referrals"),
+          api.get("/admin/stats/questions"),
+        ]);
+
+        const dauData = Array.isArray(dauResp.data?.data) ? dauResp.data.data : [];
+        setDau(
+          dauData.map((p: any) => ({
+            date: new Date(p.day).toLocaleDateString("en", { month: "short", day: "numeric" }),
+            count: p.dau,
+          }))
+        );
+
+        setExamStats(examsResp.data);
+
+        const inviters = Array.isArray(referralsResp.data?.top_inviters) ? referralsResp.data.top_inviters : [];
+        setReferrals(
+          inviters.map((r: any) => ({
+            username: r.telegram_username ? `@${String(r.telegram_username).replace(/^@/, "")}` : String(r.telegram_id),
+            invites: r.invite_count,
+          }))
+        );
+
+        const qs = Array.isArray(questionsResp.data) ? questionsResp.data : [];
+        setQuestions(
+          qs.map((q: any) => ({
+            id: q.question_id,
+            text: q.prompt,
+            attempts: q.total_answer_count,
+            accuracy: Math.round((q.accuracy ?? 0) * 100),
+          }))
+        );
+      } catch {
+        // Keep empty state (auth/permissions will already gate this page).
+      }
+    })();
+  }, []);
+
   return (
     <div className="space-y-6">
       <div>
@@ -51,7 +91,7 @@ export default function AnalyticsPage() {
           <CardContent>
             <div className="h-[250px]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockDAU}>
+                <AreaChart data={dau}>
                   <defs>
                     <linearGradient id="dauGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
@@ -75,12 +115,12 @@ export default function AnalyticsPage() {
           <CardContent>
             <div className="h-[250px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={mockExams}>
+                <BarChart data={examBar}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="subject" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                  <XAxis dataKey="metric" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
                   <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
                   <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "var(--radius)", fontSize: 12 }} />
-                  <Bar dataKey="completed" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -92,7 +132,7 @@ export default function AnalyticsPage() {
           <CardHeader><CardTitle className="text-base">Top Referrers</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {mockReferrals.map((r, i) => (
+              {referrals.map((r, i) => (
                 <div key={r.username} className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-mono text-muted-foreground w-5">{i + 1}.</span>
@@ -119,9 +159,9 @@ export default function AnalyticsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mockQuestions.map((q) => (
+                {questions.map((q) => (
                   <TableRow key={q.id}>
-                    <TableCell className="font-mono text-xs">{q.id}</TableCell>
+                    <TableCell className="font-mono text-xs">{q.id.slice(0, 6)}</TableCell>
                     <TableCell className="text-sm max-w-[200px] truncate">{q.text}</TableCell>
                     <TableCell className="text-right text-sm">{q.attempts.toLocaleString()}</TableCell>
                     <TableCell className="text-right">

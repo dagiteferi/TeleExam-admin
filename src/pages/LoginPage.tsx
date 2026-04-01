@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Bot, Loader2 } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { clearToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +19,22 @@ const loginSchema = z.object({
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
+
+function toErrorMessage(err: any): string {
+  const data = err?.response?.data;
+  const detail = data?.detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return "Login failed.";
+    }
+  }
+  if (typeof data?.error === "string") return data.error;
+  if (typeof err?.message === "string") return err.message;
+  return "Login failed. Please check your credentials.";
+}
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -33,23 +50,6 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginForm) => {
     setLoading(true);
     try {
-      // Demo mode: use demo@admin.com / demo1234 to bypass API
-      if (data.email === "demo@admin.com" && data.password === "demo1234") {
-        // Create a fake JWT with superadmin permissions
-        const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-        const payload = btoa(JSON.stringify({
-          sub: "demo-admin",
-          email: "demo@admin.com",
-          permissions: ["*"],
-          exp: Math.floor(Date.now() / 1000) + 86400,
-        }));
-        const fakeToken = `${header}.${payload}.demo-signature`;
-        login(fakeToken);
-        toast.success("Welcome back!");
-        navigate("/");
-        return;
-      }
-
       const params = new URLSearchParams();
       params.append("username", data.email);
       params.append("password", data.password);
@@ -62,7 +62,9 @@ export default function LoginPage() {
       toast.success("Welcome back!");
       navigate("/");
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Login failed. Please check your credentials.");
+      // ensure we don't keep any stale/invalid token around
+      clearToken();
+      toast.error(toErrorMessage(err));
     } finally {
       setLoading(false);
     }
