@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, ChevronLeft, ChevronRight, Ban, CheckCircle, Loader2, Unlock, Filter } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, Ban, CheckCircle, Loader2, Unlock, Lock, Filter } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -118,6 +118,16 @@ export default function UsersPage() {
     }
   };
 
+  const handleRevokeFullAccess = async (telegram_id: number) => {
+    try {
+      await api.post("/admin/users/revoke-full-access", { telegram_id });
+      toast.success("Full access revoked. User must now use invites again.");
+      fetchUsers();
+    } catch {
+      toast.error("Failed to revoke full access");
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
   const currentPage = Math.floor(offset / LIMIT) + 1;
 
@@ -214,8 +224,12 @@ export default function UsersPage() {
                     <TableCell>
                       <div className="flex flex-col">
                         <span className="font-bold flex items-center gap-1">
-                            {user.first_name} {user.last_name}
-                            {user.is_full_access && <Unlock className="h-3 w-3 text-green-500" title="Bypassing Invites" />}
+                             {user.first_name} {user.last_name}
+                             {user.is_full_access && (
+                               <span title="Full Platform Access Granted">
+                                 <Unlock className="h-4 w-4 text-green-500 inline ml-1" />
+                               </span>
+                             )}
                         </span>
                         <span className="text-xs text-muted-foreground">@{user.telegram_username || "no_username"}</span>
                         {user.invited_by_user_id && (
@@ -248,21 +262,37 @@ export default function UsersPage() {
                        </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {isSuperadmin && !user.is_full_access && (
+                      <div className="flex justify-end gap-2">
+                        {isSuperadmin && (
+                          user.is_full_access ? (
                             <Button 
                                 variant="outline" 
                                 size="sm" 
-                                className="h-8 border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700"
+                                className="h-8 border-amber-500 text-amber-600 hover:bg-amber-50"
+                                onClick={() => handleRevokeFullAccess(user.telegram_id)}
+                            >
+                                <Lock className="h-3.5 w-3.5 mr-1" /> Revoke
+                            </Button>
+                          ) : (
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-8 border-green-500 text-green-600 hover:bg-green-50"
                                 onClick={() => handleGrantFullAccess(user.telegram_id)}
                             >
-                                <Unlock className="h-3.5 w-3.5 mr-1" /> Grant Full
+                                <Unlock className="h-3.5 w-3.5 mr-1" /> Access
                             </Button>
+                          )
                         )}
                         {canBan && (
                              user.is_banned ? (
-                                <Button variant="outline" size="sm" className="h-8" onClick={() => handleUnban(user)}>
-                                  <CheckCircle className="h-3.5 w-3.5 mr-1" /> Restore
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 border-green-600 text-green-600 hover:bg-green-50" 
+                                  onClick={() => handleUnban(user)}
+                                >
+                                  <CheckCircle className="h-3.5 w-3.5 mr-1" /> Unban
                                 </Button>
                               ) : (
                                 <Button
@@ -271,7 +301,7 @@ export default function UsersPage() {
                                   className="h-8"
                                   onClick={() => setBanDialog({ open: true, user, reason: "" })}
                                 >
-                                  <Ban className="h-3.5 w-3.5 mr-1" /> Terminate
+                                  <Ban className="h-3.5 w-3.5 mr-1" /> Ban
                                 </Button>
                               )
                         )}

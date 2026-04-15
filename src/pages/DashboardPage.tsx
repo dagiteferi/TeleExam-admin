@@ -1,168 +1,144 @@
 import { useEffect, useState } from "react";
-import { Users, FileText, Activity, Ban } from "lucide-react";
+import { Users, FileText, Activity, Ban, TrendingUp, TrendingDown } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { Skeleton } from "@/components/ui/skeleton";
 
-interface DashboardStats {
+interface SummaryData {
   total_users: number;
+  user_growth_percent: number;
   total_exams: number;
-  dau: number;
+  today_dau: number;
   banned_users: number;
-}
-
-type DauPoint = { date: string; users: number };
-
-function toISODate(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
-async function countBannedUsers(): Promise<number> {
-  const pageSize = 200;
-  let offset = 0;
-  let banned = 0;
-  while (true) {
-    const resp = await api.get("/admin/users/", { params: { limit: pageSize, offset } });
-    const items = Array.isArray(resp.data) ? resp.data : [];
-    banned += items.filter((u: any) => u?.is_banned).length;
-    if (items.length < pageSize) break;
-    offset += pageSize;
-    if (offset > 5000) break;
-  }
-  return banned;
+  chart_data: Array<{ day: string; dau: number }>;
 }
 
 export default function DashboardPage() {
-  const { hasPermission } = useAuth();
-  const canViewStats = hasPermission("view_stats");
-  const canViewUsers = hasPermission("view_users");
-
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const { isSuperAdmin } = useAuth();
+  const [data, setData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [chart, setChart] = useState<DauPoint[]>([]);
 
   useEffect(() => {
-    if (!canViewStats) {
-      setLoading(false);
-      setStats(null);
-      setChart([]);
-      return;
-    }
-
-    (async () => {
+    async function fetchSummary() {
       try {
-        const today = new Date();
-        const start = new Date();
-        start.setDate(today.getDate() - 13);
-
-        const [examStatsResp, dauResp, banned] = await Promise.all([
-          api.get("/admin/stats/exams"),
-          api.get("/admin/stats/dau", { params: { start_date: toISODate(start), end_date: toISODate(today) } }),
-          canViewUsers ? countBannedUsers().catch(() => 0) : Promise.resolve(0),
-        ]);
-
-        const dauData = Array.isArray(dauResp.data?.data) ? dauResp.data.data : [];
-        const dauChart: DauPoint[] = dauData.map((p: any) => ({
-          date: new Date(p.day).toLocaleDateString("en", { month: "short", day: "numeric" }),
-          users: p.dau,
-        }));
-        setChart(dauChart);
-
-        const lastDau = dauData.length ? dauData[dauData.length - 1]?.dau : 0;
-
-        setStats({
-          total_users: examStatsResp.data?.total_users ?? 0,
-          total_exams: examStatsResp.data?.total_exams ?? 0,
-          dau: lastDau ?? 0,
-          banned_users: banned,
-        });
-      } catch {
-        // Fallback mock data for demo
-        setStats({ total_users: 12453, total_exams: 87621, dau: 1843, banned_users: 67 });
-        setChart(
-          Array.from({ length: 14 }, (_, i) => ({
-            date: new Date(Date.now() - (13 - i) * 86400000).toLocaleDateString("en", { month: "short", day: "numeric" }),
-            users: Math.floor(Math.random() * 200 + 100),
-          }))
-        );
+        const resp = await api.get("/admin/stats/summary");
+        setData(resp.data);
+      } catch (err) {
+        console.error("Failed to fetch summary:", err);
       } finally {
         setLoading(false);
       }
-    })();
-  }, [canViewStats, canViewUsers]);
+    }
+    fetchSummary();
+  }, []);
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => (
-          <Card key={i} className="animate-pulse">
-            <CardContent className="p-6 h-28" />
-          </Card>
-        ))}
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-[400px] w-full" />
       </div>
     );
   }
 
-  if (!canViewStats) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground text-sm">
-            You don’t have permission to view statistics.
-          </p>
-        </div>
-        <Card>
-          <CardContent className="p-6 text-sm text-muted-foreground">
-            Ask the Superadmin to grant you <span className="font-mono">view_stats</span>.
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const growthLabel = data ? (
+    <span className={`inline-flex items-center gap-1 ${data.user_growth_percent >= 0 ? "text-success" : "text-destructive"}`}>
+      {data.user_growth_percent >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+      {Math.abs(data.user_growth_percent)}% from last month
+    </span>
+  ) : null;
+
+  const chartPoints = data?.chart_data.map(p => ({
+    date: new Date(p.day).toLocaleDateString("en", { month: "short", day: "numeric" }),
+    users: p.dau
+  })) || [];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground text-sm">Overview of your platform</p>
+        <p className="text-muted-foreground text-sm">Real-time platform overview</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Users" value={stats?.total_users?.toLocaleString() ?? "—"} icon={<Users className="h-4 w-4" />} description="+12% from last month" />
-        <StatCard title="Total Exams" value={stats?.total_exams?.toLocaleString() ?? "—"} icon={<FileText className="h-4 w-4" />} description="All time" />
-        <StatCard title="Daily Active Users" value={stats?.dau?.toLocaleString() ?? "—"} icon={<Activity className="h-4 w-4" />} description="Today" />
-        <StatCard title="Banned Users" value={stats?.banned_users?.toLocaleString() ?? "—"} icon={<Ban className="h-4 w-4" />} description="Currently banned" />
+        <StatCard 
+          title="Total Users" 
+          value={data?.total_users.toLocaleString() || "0"} 
+          icon={<Users className="h-4 w-4" />} 
+          description={growthLabel} 
+        />
+        <StatCard 
+          title="Total Exams" 
+          value={data?.total_exams.toLocaleString() || "0"} 
+          icon={<FileText className="h-4 w-4" />} 
+          description="Completed exams (Mode: Exam)" 
+        />
+        <StatCard 
+          title="Daily Active Users" 
+          value={data?.today_dau.toLocaleString() || "0"} 
+          icon={<Activity className="h-4 w-4" />} 
+          description="Users active in the last 24h" 
+        />
+        <StatCard 
+          title="Banned Users" 
+          value={data?.banned_users.toLocaleString() || "0"} 
+          icon={<Ban className="h-4 w-4" />} 
+          description="Currently restricted accounts" 
+        />
       </div>
 
-      <Card>
+      <Card className="glass-card overflow-hidden">
         <CardHeader>
-          <CardTitle className="text-base">User Activity (14 days)</CardTitle>
+          <CardTitle className="text-base font-semibold">User Activity (Last 14 Days)</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-[300px]">
+          <div className="h-[350px] w-full mt-4">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chart}>
+              <AreaChart data={chartPoints}>
                 <defs>
                   <linearGradient id="colorUsers" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
                     <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis 
+                  dataKey="date" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} 
+                  dy={10}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} 
+                />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "hsl(var(--card))",
                     border: "1px solid hsl(var(--border))",
                     borderRadius: "var(--radius)",
-                    fontSize: 12,
+                    boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
                   }}
                 />
-                <Area type="monotone" dataKey="users" stroke="hsl(var(--primary))" fillOpacity={1} fill="url(#colorUsers)" strokeWidth={2} />
+                <Area 
+                  type="monotone" 
+                  dataKey="users" 
+                  stroke="hsl(var(--primary))" 
+                  fillOpacity={1} 
+                  fill="url(#colorUsers)" 
+                  strokeWidth={3} 
+                  animationDuration={1500}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
