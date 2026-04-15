@@ -89,7 +89,7 @@ export default function AdminsPage() {
       const res = await api.get("/admin/auth/admins");
       setAdmins(res.data);
     } catch (err) {
-      console.error(err);
+      // Error toast handles user feedback
       toast.error("Failed to load admins");
     } finally {
       setLoading(false);

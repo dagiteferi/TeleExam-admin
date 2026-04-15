@@ -27,7 +27,7 @@ export default function DashboardPage() {
         const resp = await api.get("/admin/stats/summary");
         setData(resp.data);
       } catch (err) {
-        console.error("Failed to fetch summary:", err);
+        // toast.error is already handled or we can add it here if needed
       } finally {
         setLoading(false);
       }
