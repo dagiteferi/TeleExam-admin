@@ -1,10 +1,9 @@
 import axios from "axios";
 
-// Optional: use env later if needed
-// const API_BASE = import.meta.env.VITE_API_BASE_URL;
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 const API = axios.create({
-  baseURL: "https://dagidev-teleexamai.hf.space",
+  baseURL: API_BASE,
 });
 
 // =======================

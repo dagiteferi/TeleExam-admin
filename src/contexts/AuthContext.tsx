@@ -4,6 +4,7 @@ import { decodeToken, clearToken, setToken, getToken, Permission } from "@/lib/a
 interface AuthUser {
   email: string;
   permissions: Permission[];
+  role?: string;
 }
 
 interface AuthContextType {
@@ -20,16 +21,22 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
     const decoded = decodeToken();
-    if (decoded) return { email: decoded.email ?? "", permissions: decoded.permissions ?? [] };
-    // If we have a token but can't decode claims, keep session "logged in"
-    // and treat permissions as empty until we can decode or fetch profile info.
+    if (decoded) return { 
+      email: decoded.email ?? "", 
+      permissions: decoded.permissions ?? [],
+      role: decoded.role as string | undefined
+    };
     return getToken() ? { email: "", permissions: [] } : null;
   });
 
   const login = useCallback((token: string) => {
     setToken(token);
     const decoded = decodeToken();
-    setUser(decoded ? { email: decoded.email ?? "", permissions: decoded.permissions ?? [] } : { email: "", permissions: [] });
+    setUser(decoded ? { 
+      email: decoded.email ?? "", 
+      permissions: decoded.permissions ?? [],
+      role: decoded.role as string | undefined
+    } : { email: "", permissions: [] });
   }, []);
 
   const logout = useCallback(() => {
@@ -37,26 +44,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  const isSuperAdmin = user?.role === "superadmin" || (user?.permissions.includes("*") ?? false);
+
   const hasPermission = useCallback(
     (perm: Permission) => {
       if (!user) return false;
-      if (user.permissions.includes("*")) return true;
+      if (isSuperAdmin || user.permissions.includes("*")) return true;
       return user.permissions.includes(perm);
     },
-    [user]
+    [user, isSuperAdmin]
   );
-
-  const isSuperAdmin = user?.permissions.includes("*") ?? false;
 
   // Check token expiry periodically
   useEffect(() => {
     const interval = setInterval(() => {
       const decoded = decodeToken();
       const token = getToken();
-      // Only log out if the token is gone (manual logout / cleared storage),
-      // or if decodeToken() cleared it due to expiry.
       if (!token) setUser(null);
-      else if (decoded) setUser({ email: decoded.email ?? "", permissions: decoded.permissions ?? [] });
+      else if (decoded) setUser({ 
+        email: decoded.email ?? "", 
+        permissions: decoded.permissions ?? [],
+        role: decoded.role as string | undefined
+      });
     }, 60000);
     return () => clearInterval(interval);
   }, [user]);
