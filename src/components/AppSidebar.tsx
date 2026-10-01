@@ -4,6 +4,7 @@ import {
   Users,
   ShieldCheck,
   Bot,
+  BookOpen,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Analytics", url: "/analytics", icon: BarChart3, permission: "view_stats" },
   { title: "Users", url: "/users", icon: Users, permission: "view_users" },
+  { title: "Exams", url: "/exams", icon: BookOpen, permission: "manage_content" },
   { title: "Admins", url: "/admins", icon: ShieldCheck, superAdminOnly: true },
 ];
 

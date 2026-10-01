@@ -9,6 +9,7 @@ import DashboardPage from "@/pages/DashboardPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import UsersPage from "@/pages/UsersPage";
 import AdminsPage from "@/pages/AdminsPage";
+import ExamsPage from "@/pages/ExamsPage";
 import NotFound from "@/pages/NotFound";
 
 const App = () => (
@@ -22,6 +23,7 @@ const App = () => (
             <Route path="/" element={<DashboardPage />} />
             <Route path="/analytics" element={<ProtectedRoute permission="view_stats"><AnalyticsPage /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute permission="view_users"><UsersPage /></ProtectedRoute>} />
+            <Route path="/exams" element={<ProtectedRoute permission="manage_content"><ExamsPage /></ProtectedRoute>} />
             <Route path="/admins" element={<ProtectedRoute superAdminOnly><AdminsPage /></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<NotFound />} />

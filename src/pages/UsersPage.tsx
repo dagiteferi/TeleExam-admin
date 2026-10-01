@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, ChevronLeft, ChevronRight, Ban, CheckCircle, Loader2, Unlock, Lock, Filter } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, Ban, CheckCircle, Loader2, Unlock, Lock, Filter, Star, StarOff, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -39,7 +39,7 @@ export default function UsersPage() {
   const [isProFilter, setIsProFilter] = useState<string>("all");
   const [isBannedFilter, setIsBannedFilter] = useState<string>("all");
   const [invitedByFilter, setInvitedByFilter] = useState<string>("");
-  
+
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
 
@@ -50,8 +50,8 @@ export default function UsersPage() {
 
   const fetchUsers = useCallback(() => {
     setLoading(true);
-    const params: any = { 
-      limit: LIMIT, 
+    const params: any = {
+      limit: LIMIT,
       offset,
       search: search.trim() || undefined,
     };
@@ -74,7 +74,7 @@ export default function UsersPage() {
       .finally(() => setLoading(false));
   }, [offset, search, isProFilter, isBannedFilter, invitedByFilter]);
 
-  useEffect(() => { 
+  useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
       fetchUsers();
     }, 500);
@@ -128,6 +128,34 @@ export default function UsersPage() {
     }
   };
 
+  const handleTogglePro = async (user: User) => {
+    const newStatus = !user.is_pro;
+    try {
+      await api.post(`/admin/users/${user.id}/toggle-pro`, undefined, {
+        params: { is_pro: newStatus },
+      });
+      toast.success(
+        newStatus
+          ? `✨ ${user.first_name || user.telegram_username || "User"} is now PRO — notified via Telegram`
+          : `🔓 ${user.first_name || user.telegram_username || "User"} downgraded to Free — notified via Telegram`
+      );
+      fetchUsers();
+    } catch {
+      toast.error("Failed to toggle PRO status");
+    }
+  };
+
+  const handleResetAccess = async (user: User) => {
+    if (!confirm(`Reset ALL access for ${user.first_name || user.telegram_username || user.telegram_id}? This will remove PRO, full access, and reset invites to 0.`)) return;
+    try {
+      await api.post(`/admin/users/${user.id}/reset-access`);
+      toast.success(`⚠️ Access fully reset for ${user.first_name || user.telegram_username || "User"} — they have been notified`);
+      fetchUsers();
+    } catch {
+      toast.error("Failed to reset user access");
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
   const currentPage = Math.floor(offset / LIMIT) + 1;
 
@@ -139,8 +167,8 @@ export default function UsersPage() {
           <p className="text-muted-foreground text-sm uppercase tracking-widest">Master Control Interface</p>
         </div>
         <div className="flex gap-2">
-            <Badge variant="outline" className="h-6">TOTAL: {total}</Badge>
-            {isSuperadmin && <Badge className="h-6 bg-red-600">SUPERADMIN ACCESS</Badge>}
+          <Badge variant="outline" className="h-6">TOTAL: {total}</Badge>
+          {isSuperadmin && <Badge className="h-6 bg-red-600">SUPERADMIN ACCESS</Badge>}
         </div>
       </div>
 
@@ -156,7 +184,7 @@ export default function UsersPage() {
                 onChange={(e) => { setSearch(e.target.value); setOffset(0); }}
               />
             </div>
-            
+
             <div className="flex flex-wrap gap-2">
               <Select value={isProFilter} onValueChange={(v) => { setIsProFilter(v); setOffset(0); }}>
                 <SelectTrigger className="w-[130px] h-9">
@@ -182,7 +210,7 @@ export default function UsersPage() {
 
               {invitedByFilter && (
                 <Button variant="outline" size="sm" onClick={() => setInvitedByFilter("")} className="h-9 border-dashed">
-                    Clear Referrer Filter
+                  Clear Referrer Filter
                 </Button>
               )}
             </div>
@@ -204,8 +232,8 @@ export default function UsersPage() {
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-20">
                     <div className="flex flex-col items-center gap-2">
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                        <span className="text-xs font-mono animate-pulse">SYNCHRONIZING WITH BACKEND...</span>
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      <span className="text-xs font-mono animate-pulse">SYNCHRONIZING WITH BACKEND...</span>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -224,86 +252,121 @@ export default function UsersPage() {
                     <TableCell>
                       <div className="flex flex-col">
                         <span className="font-bold flex items-center gap-1">
-                             {user.first_name} {user.last_name}
-                             {user.is_full_access && (
-                               <span title="Full Platform Access Granted">
-                                 <Unlock className="h-4 w-4 text-green-500 inline ml-1" />
-                               </span>
-                             )}
+                          {user.first_name} {user.last_name}
+                          {user.is_full_access && (
+                            <span title="Full Platform Access Granted">
+                              <Unlock className="h-4 w-4 text-green-500 inline ml-1" />
+                            </span>
+                          )}
                         </span>
                         <span className="text-xs text-muted-foreground">@{user.telegram_username || "no_username"}</span>
                         {user.invited_by_user_id && (
-                             <button 
-                                onClick={() => setInvitedByFilter(user.invited_by_user_id!)}
-                                className="text-[10px] text-blue-500 hover:underline text-left mt-1"
-                             >
-                                Referred by: {user.invited_by_user_id.slice(0,8)}...
-                             </button>
+                          <button
+                            onClick={() => setInvitedByFilter(user.invited_by_user_id!)}
+                            className="text-[10px] text-blue-500 hover:underline text-left mt-1"
+                          >
+                            Referred by: {user.invited_by_user_id.slice(0, 8)}...
+                          </button>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         <Badge variant={user.is_pro ? "default" : "outline"} className={user.is_pro ? "bg-amber-500 hover:bg-amber-600 border-none" : ""}>
-                            {user.is_pro ? "PRO" : "STANDARD"}
+                          {user.is_pro ? "PRO" : "STANDARD"}
                         </Badge>
                         {user.is_full_access && (
-                            <Badge className="bg-green-600 hover:bg-green-700 border-none">UNLIMITED</Badge>
+                          <Badge className="bg-green-600 hover:bg-green-700 border-none">UNLIMITED</Badge>
                         )}
                         {user.is_banned && (
-                            <Badge variant="destructive">RESTRICTED</Badge>
+                          <Badge variant="destructive">RESTRICTED</Badge>
                         )}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                       <div className="flex flex-col items-end">
-                            <span className="text-lg font-mono font-bold">{user.invite_count}</span>
-                            <span className="text-[10px] uppercase text-muted-foreground">Invites</span>
-                       </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-lg font-mono font-bold">{user.invite_count}</span>
+                        <span className="text-[10px] uppercase text-muted-foreground">Invites</span>
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-2 flex-wrap">
+                        {/* Toggle PRO button — available to anyone with view_users permission */}
+                        {user.is_pro ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
+                            onClick={() => handleTogglePro(user)}
+                            title="Revoke PRO — downgrade to Free"
+                          >
+                            <StarOff className="h-3.5 w-3.5 mr-1" /> Revoke PRO
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+                            onClick={() => handleTogglePro(user)}
+                            title="Upgrade user to PRO"
+                          >
+                            <Star className="h-3.5 w-3.5 mr-1" /> Make PRO
+                          </Button>
+                        )}
+
                         {isSuperadmin && (
                           user.is_full_access ? (
-                            <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-8 border-amber-500 text-amber-600 hover:bg-amber-50"
-                                onClick={() => handleRevokeFullAccess(user.telegram_id)}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 border-amber-500 text-amber-600 hover:bg-amber-50"
+                              onClick={() => handleRevokeFullAccess(user.telegram_id)}
                             >
-                                <Lock className="h-3.5 w-3.5 mr-1" /> Revoke
+                              <Lock className="h-3.5 w-3.5 mr-1" /> Revoke
                             </Button>
                           ) : (
-                            <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-8 border-green-500 text-green-600 hover:bg-green-50"
-                                onClick={() => handleGrantFullAccess(user.telegram_id)}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 border-green-500 text-green-600 hover:bg-green-50"
+                              onClick={() => handleGrantFullAccess(user.telegram_id)}
                             >
-                                <Unlock className="h-3.5 w-3.5 mr-1" /> Access
+                              <Unlock className="h-3.5 w-3.5 mr-1" /> Access
                             </Button>
                           )
                         )}
                         {canBan && (
-                             user.is_banned ? (
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  className="h-8 border-green-600 text-green-600 hover:bg-green-50" 
-                                  onClick={() => handleUnban(user)}
-                                >
-                                  <CheckCircle className="h-3.5 w-3.5 mr-1" /> Unban
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  className="h-8"
-                                  onClick={() => setBanDialog({ open: true, user, reason: "" })}
-                                >
-                                  <Ban className="h-3.5 w-3.5 mr-1" /> Ban
-                                </Button>
-                              )
+                          user.is_banned ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 border-green-600 text-green-600 hover:bg-green-50"
+                              onClick={() => handleUnban(user)}
+                            >
+                              <CheckCircle className="h-3.5 w-3.5 mr-1" /> Unban
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => setBanDialog({ open: true, user, reason: "" })}
+                            >
+                              <Ban className="h-3.5 w-3.5 mr-1" /> Ban
+                            </Button>
+                          )
+                        )}
+                        {/* Reset All Access — superadmin only */}
+                        {isSuperadmin && (user.is_pro || user.is_full_access || user.invite_count > 0) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                            onClick={() => handleResetAccess(user)}
+                            title="Reset all access — wipes PRO, full access, and invites"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset All
+                          </Button>
                         )}
                       </div>
                     </TableCell>
@@ -319,10 +382,10 @@ export default function UsersPage() {
               Sequence {currentPage} of {totalPages || 1} — [{total} Profiles]
             </span>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => { setOffset((o) => Math.max(0, o - LIMIT)); window.scrollTo(0,0); }} className="h-8">
+              <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => { setOffset((o) => Math.max(0, o - LIMIT)); window.scrollTo(0, 0); }} className="h-8">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="sm" disabled={users.length < LIMIT} onClick={() => { setOffset((o) => o + LIMIT); window.scrollTo(0,0); }} className="h-8">
+              <Button variant="outline" size="sm" disabled={users.length < LIMIT} onClick={() => { setOffset((o) => o + LIMIT); window.scrollTo(0, 0); }} className="h-8">
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -335,8 +398,8 @@ export default function UsersPage() {
         <DialogContent className="border-2 border-destructive/20">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-destructive">
-                <Ban className="h-5 w-5" />
-                RESTRICT ACCESS
+              <Ban className="h-5 w-5" />
+              RESTRICT ACCESS
             </DialogTitle>
             <DialogDescription>
               Are you sure you want to terminate access for <strong>{banDialog.user?.telegram_username ?? banDialog.user?.telegram_id}</strong>?
