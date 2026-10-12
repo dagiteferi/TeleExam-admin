@@ -5,6 +5,8 @@ import {
   ShieldCheck,
   Bot,
   BookOpen,
+  CreditCard,
+  Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -33,10 +35,12 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Payments", url: "/payments", icon: CreditCard, superAdminOnly: true },
   { title: "Analytics", url: "/analytics", icon: BarChart3, permission: "view_stats" },
   { title: "Users", url: "/users", icon: Users, permission: "view_users" },
   { title: "Exams", url: "/exams", icon: BookOpen, permission: "manage_content" },
   { title: "Admins", url: "/admins", icon: ShieldCheck, superAdminOnly: true },
+  { title: "Settings", url: "/settings", icon: Settings, superAdminOnly: true },
 ];
 
 export function AppSidebar() {

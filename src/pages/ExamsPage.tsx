@@ -212,10 +212,10 @@ function PastExamsTab({ support }: { support: ReturnType<typeof useSupport> }) {
             </div>
             <div className="space-y-1">
               <Label>Course <span className="text-muted-foreground text-xs">(optional)</span></Label>
-              <Select value={form.course_id || ""} onValueChange={v => setForm(f => ({ ...f, course_id: v }))}>
+              <Select value={form.course_id || "none"} onValueChange={v => setForm(f => ({ ...f, course_id: v === "none" ? "" : v }))}>
                 <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">— None —</SelectItem>
+                  <SelectItem value="none">— None —</SelectItem>
                   {coursesByDept(form.department_id).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -481,10 +481,10 @@ function QuestionsTab({ support }: { support: ReturnType<typeof useSupport> }) {
               </div>
               <div className="space-y-1">
                 <Label>Difficulty <span className="text-muted-foreground text-xs">(1–5)</span></Label>
-                <Select value={String(form.difficulty || "")} onValueChange={v => setForm(f => ({ ...f, difficulty: v || "" }))}>
+                <Select value={String(form.difficulty || "none")} onValueChange={v => setForm(f => ({ ...f, difficulty: v === "none" ? "" : v }))}>
                   <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— Not set —</SelectItem>
+                    <SelectItem value="none">— Not set —</SelectItem>
                     {[1,2,3,4,5].map(n => <SelectItem key={n} value={String(n)}>{n} — {"★".repeat(n)}</SelectItem>)}
                   </SelectContent>
                 </Select>
