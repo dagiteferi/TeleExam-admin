@@ -1,11 +1,26 @@
 import React, { useState, useEffect } from "react";
-import { CreditCard, Landmark, CheckCircle, XCircle, Plus, RefreshCw, Pencil, Trash2 } from "lucide-react";
+import {
+  CreditCard,
+  Landmark,
+  CheckCircle,
+  XCircle,
+  Plus,
+  RefreshCw,
+  Pencil,
+  Trash2,
+  GraduationCap,
+  Copy,
+  ExternalLink,
+  Loader2,
+  ShieldAlert,
+  ZoomIn,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import axios from "axios";
@@ -29,10 +44,41 @@ interface PaymentRequest {
   created_at: string;
 }
 
+// Subset of GET /admin/users/{user_id} used to describe the receipt sender
+interface SenderInfo {
+  id: string;
+  telegram_id: number;
+  telegram_username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  department_name: string | null;
+  department_code: string | null;
+  is_pro: boolean;
+  is_full_access: boolean;
+  is_banned: boolean;
+  invite_count: number;
+  invited_by_username: string | null;
+  invited_by_name: string | null;
+  total_exams_taken: number;
+  average_score: number | null;
+  created_at: string;
+}
+
+type SenderState = SenderInfo | "loading" | "error";
+
+function senderName(sender: SenderInfo): string {
+  const name = `${sender.first_name || ""} ${sender.last_name || ""}`.trim();
+  return name || (sender.telegram_username ? `@${sender.telegram_username}` : String(sender.telegram_id));
+}
+
 export default function PaymentsPage() {
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [requests, setRequests] = useState<PaymentRequest[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [senders, setSenders] = useState<Record<string, SenderState>>({});
+  const [selectedRequest, setSelectedRequest] = useState<PaymentRequest | null>(null);
+  const [confirmDecision, setConfirmDecision] = useState<{ request: PaymentRequest; action: "approve" | "reject" } | null>(null);
+  const [decisionLoading, setDecisionLoading] = useState(false);
 
   // Add Bank State
   const [openAddBank, setOpenAddBank] = useState(false);
@@ -74,6 +120,24 @@ export default function PaymentsPage() {
     fetchBanks();
     fetchRequests();
   }, []);
+
+  // Load each receipt sender's profile once from the existing user detail endpoint
+  useEffect(() => {
+    const missing = [...new Set(requests.map((r) => r.user_id))].filter(
+      (id) => !senders[id] || senders[id] === "error"
+    );
+    if (missing.length === 0) return;
+    setSenders((prev) => ({ ...prev, ...Object.fromEntries(missing.map((id) => [id, "loading" as const])) }));
+    missing.forEach(async (id) => {
+      try {
+        const res = await axios.get(`${API_BASE}/admin/users/${id}`, authHeaders);
+        setSenders((prev) => ({ ...prev, [id]: res.data as SenderInfo }));
+      } catch {
+        setSenders((prev) => ({ ...prev, [id]: "error" }));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests]);
 
   const handleCreateBank = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,24 +216,60 @@ export default function PaymentsPage() {
     }
   };
 
-  const handleApprove = async (id: string) => {
+  const handleDecision = async () => {
+    if (!confirmDecision) return;
+    const { request, action } = confirmDecision;
+    setDecisionLoading(true);
     try {
-      await axios.post(`${API_BASE}/admin/payments/requests/${id}/approve`, {}, authHeaders);
-      toast.success("Payment request approved! User upgraded to PRO.");
+      await axios.post(`${API_BASE}/admin/payments/requests/${request.id}/${action}`, {}, authHeaders);
+      toast.success(
+        action === "approve" ? "Payment request approved! User upgraded to PRO." : "Payment request rejected."
+      );
+      setConfirmDecision(null);
+      setSelectedRequest(null);
+      // Sender's tier may have changed — refetch their profile too
+      setSenders((prev) => {
+        const next = { ...prev };
+        delete next[request.user_id];
+        return next;
+      });
       fetchRequests();
     } catch (err) {
-      toast.error("Failed to approve payment request");
+      toast.error(action === "approve" ? "Failed to approve payment request" : "Failed to reject payment request");
+    } finally {
+      setDecisionLoading(false);
     }
   };
 
-  const handleReject = async (id: string) => {
-    try {
-      await axios.post(`${API_BASE}/admin/payments/requests/${id}/reject`, {}, authHeaders);
-      toast.success("Payment request rejected.");
-      fetchRequests();
-    } catch (err) {
-      toast.error("Failed to reject payment request");
+  const renderSenderSummary = (userId: string) => {
+    const sender = senders[userId];
+    if (!sender || sender === "loading") {
+      return (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading sender...
+        </div>
+      );
     }
+    if (sender === "error") {
+      return <span className="text-xs font-mono text-muted-foreground">User ID: {userId.slice(0, 8)}... (details unavailable)</span>;
+    }
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-semibold text-sm">{senderName(sender)}</span>
+          {sender.is_pro && <Badge className="bg-amber-500 text-white text-[10px]">PRO</Badge>}
+          {sender.is_banned && <Badge variant="destructive" className="text-[10px]">BANNED</Badge>}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {sender.telegram_username ? `@${sender.telegram_username}` : "no username"} · ID{" "}
+          <span className="font-mono">{sender.telegram_id}</span>
+        </p>
+        <p className="text-xs flex items-center gap-1">
+          <GraduationCap className="h-3.5 w-3.5 text-primary" />
+          {sender.department_name || <span className="italic text-muted-foreground">No department</span>}
+        </p>
+      </div>
+    );
   };
 
   return (
@@ -209,8 +309,8 @@ export default function PaymentsPage() {
                   {requests.map((req) => (
                     <Card key={req.id} className="overflow-hidden border">
                       <div
-                        className="h-48 bg-muted flex items-center justify-center overflow-hidden relative cursor-zoom-in group"
-                        onClick={() => setPreviewUrl(req.screenshot_url)}
+                        className="h-48 bg-muted flex items-center justify-center overflow-hidden relative cursor-pointer group"
+                        onClick={() => setSelectedRequest(req)}
                       >
                         <img
                           src={req.screenshot_url}
@@ -222,13 +322,13 @@ export default function PaymentsPage() {
                         />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
                           <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 text-white text-xs px-3 py-1.5 rounded-full">
-                            🔍 Click to expand
+                            🔍 View details
                           </span>
                         </div>
                       </div>
                       <CardContent className="p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono text-muted-foreground">User ID: {req.user_id.slice(0, 8)}...</span>
+                        <div className="flex items-start justify-between gap-2">
+                          {renderSenderSummary(req.user_id)}
                           <Badge
                             variant={
                               req.status === "approved"
@@ -242,16 +342,30 @@ export default function PaymentsPage() {
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground">Submitted: {new Date(req.created_at).toLocaleString()}</p>
-                        {req.status === "pending" && (
-                          <div className="flex gap-2 pt-2">
-                            <Button size="sm" className="w-full bg-green-600 hover:bg-green-700" onClick={() => handleApprove(req.id)}>
-                              <CheckCircle className="mr-1 h-4 w-4" /> Approve
-                            </Button>
-                            <Button size="sm" variant="destructive" className="w-full" onClick={() => handleReject(req.id)}>
-                              <XCircle className="mr-1 h-4 w-4" /> Reject
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex gap-2 pt-2">
+                          <Button size="sm" variant="outline" className="w-full" onClick={() => setSelectedRequest(req)}>
+                            Details
+                          </Button>
+                          {req.status === "pending" && (
+                            <>
+                              <Button
+                                size="sm"
+                                className="w-full bg-green-600 hover:bg-green-700"
+                                onClick={() => setConfirmDecision({ request: req, action: "approve" })}
+                              >
+                                <CheckCircle className="mr-1 h-4 w-4" /> Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                className="w-full"
+                                onClick={() => setConfirmDecision({ request: req, action: "reject" })}
+                              >
+                                <XCircle className="mr-1 h-4 w-4" /> Reject
+                              </Button>
+                            </>
+                          )}
+                        </div>
                       </CardContent>
                     </Card>
                   ))}
@@ -391,6 +505,178 @@ export default function PaymentsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* RECEIPT DETAIL DIALOG */}
+      <Dialog open={!!selectedRequest} onOpenChange={(open) => { if (!open) setSelectedRequest(null); }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              Payment Receipt
+              {selectedRequest && (
+                <Badge
+                  variant={
+                    selectedRequest.status === "approved"
+                      ? "default"
+                      : selectedRequest.status === "rejected"
+                      ? "destructive"
+                      : "secondary"
+                  }
+                >
+                  {selectedRequest.status}
+                </Badge>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              Submitted {selectedRequest ? new Date(selectedRequest.created_at).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedRequest && (() => {
+            const sender = senders[selectedRequest.user_id];
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Receipt image */}
+                <div
+                  className="relative bg-muted rounded-lg overflow-hidden cursor-zoom-in group min-h-[240px] flex items-center justify-center"
+                  onClick={() => setPreviewUrl(selectedRequest.screenshot_url)}
+                >
+                  <img
+                    src={selectedRequest.screenshot_url}
+                    alt="Receipt Screenshot"
+                    className="max-h-[60vh] w-full object-contain"
+                  />
+                  <span className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                    <ZoomIn className="h-3 w-3" /> Full size
+                  </span>
+                </div>
+
+                {/* Sender details */}
+                <div className="space-y-3 text-sm">
+                  <h4 className="text-xs font-semibold uppercase text-muted-foreground">Sender</h4>
+                  {!sender || sender === "loading" ? (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading sender details...
+                    </div>
+                  ) : sender === "error" ? (
+                    <p className="text-muted-foreground">
+                      Could not load user details. User ID: <span className="font-mono">{selectedRequest.user_id}</span>
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-lg font-bold">{senderName(sender)}</span>
+                        <Badge variant={sender.is_pro ? "default" : "outline"} className={sender.is_pro ? "bg-amber-500" : ""}>
+                          {sender.is_pro ? "PRO" : "Free"}
+                        </Badge>
+                        {sender.is_full_access && <Badge className="bg-green-600 text-white">UNLIMITED</Badge>}
+                        {sender.is_banned && <Badge variant="destructive">BANNED</Badge>}
+                      </div>
+                      <div className="rounded-lg border divide-y text-xs">
+                        <DetailRow label="Telegram username">
+                          {sender.telegram_username ? (
+                            <a
+                              href={`https://t.me/${sender.telegram_username}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary hover:underline inline-flex items-center gap-1"
+                            >
+                              @{sender.telegram_username} <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </DetailRow>
+                        <DetailRow label="Telegram ID">
+                          <button
+                            className="font-mono inline-flex items-center gap-1 hover:text-primary"
+                            onClick={() => {
+                              navigator.clipboard.writeText(String(sender.telegram_id));
+                              toast.success("Telegram ID copied");
+                            }}
+                          >
+                            {sender.telegram_id} <Copy className="h-3 w-3" />
+                          </button>
+                        </DetailRow>
+                        <DetailRow label="User UUID">
+                          <span className="font-mono text-[10px]">{sender.id}</span>
+                        </DetailRow>
+                        <DetailRow label="Department">
+                          {sender.department_name
+                            ? `${sender.department_name}${sender.department_code ? ` (${sender.department_code})` : ""}`
+                            : "Not selected"}
+                        </DetailRow>
+                        <DetailRow label="Joined">{new Date(sender.created_at).toLocaleString()}</DetailRow>
+                        <DetailRow label="Exams taken">{sender.total_exams_taken}</DetailRow>
+                        <DetailRow label="Average score">
+                          {sender.average_score !== null ? `${sender.average_score.toFixed(1)}%` : "N/A"}
+                        </DetailRow>
+                        <DetailRow label="Invites">{sender.invite_count}</DetailRow>
+                        <DetailRow label="Referred by">
+                          {sender.invited_by_username ? `@${sender.invited_by_username}` : sender.invited_by_name || "—"}
+                        </DetailRow>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {selectedRequest?.status === "pending" && (
+            <DialogFooter className="border-t pt-4">
+              <Button
+                variant="destructive"
+                onClick={() => setConfirmDecision({ request: selectedRequest, action: "reject" })}
+              >
+                <XCircle className="mr-1 h-4 w-4" /> Reject
+              </Button>
+              <Button
+                className="bg-green-600 hover:bg-green-700"
+                onClick={() => setConfirmDecision({ request: selectedRequest, action: "approve" })}
+              >
+                <CheckCircle className="mr-1 h-4 w-4" /> Approve
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* APPROVE / REJECT CONFIRMATION */}
+      <Dialog open={!!confirmDecision} onOpenChange={(open) => { if (!open && !decisionLoading) setConfirmDecision(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle
+              className={`flex items-center gap-2 ${confirmDecision?.action === "reject" ? "text-destructive" : ""}`}
+            >
+              <ShieldAlert className="h-5 w-5" />
+              {confirmDecision?.action === "approve" ? "Approve Payment" : "Reject Payment"}
+            </DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const sender = confirmDecision ? senders[confirmDecision.request.user_id] : undefined;
+                const who = sender && typeof sender === "object" ? senderName(sender) : "this user";
+                return confirmDecision?.action === "approve"
+                  ? `Approve the payment from ${who}? They will be upgraded to PRO and notified via Telegram.`
+                  : `Reject the payment from ${who}? They will be notified via Telegram that the receipt could not be verified.`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmDecision(null)} disabled={decisionLoading}>
+              Cancel
+            </Button>
+            <Button
+              variant={confirmDecision?.action === "reject" ? "destructive" : "default"}
+              className={confirmDecision?.action === "approve" ? "bg-green-600 hover:bg-green-700" : ""}
+              onClick={handleDecision}
+              disabled={decisionLoading}
+            >
+              {decisionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {confirmDecision?.action === "approve" ? "Approve" : "Reject"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* IMAGE LIGHTBOX */}
       <Dialog open={!!previewUrl} onOpenChange={(open) => { if (!open) setPreviewUrl(null); }}>
         <DialogContent className="max-w-4xl p-2 bg-black/90 border-0">
@@ -408,6 +694,15 @@ export default function PaymentsPage() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-3 px-3 py-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-right break-all">{children}</span>
     </div>
   );
 }

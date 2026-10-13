@@ -105,7 +105,21 @@ interface DepartmentItem {
   is_active: boolean;
 }
 
+interface ConfirmState {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  destructive?: boolean;
+  onConfirm: () => Promise<void>;
+}
+
 const LIMIT = 10;
+
+function userLabel(user: Pick<User, "first_name" | "last_name" | "telegram_username" | "telegram_id">): string {
+  const name = `${user.first_name || ""} ${user.last_name || ""}`.trim();
+  if (name && user.telegram_username) return `${name} (@${user.telegram_username})`;
+  return name || (user.telegram_username ? `@${user.telegram_username}` : String(user.telegram_id));
+}
 
 function copyText(text: string, label: string = "Copied") {
   navigator.clipboard.writeText(text);
@@ -164,6 +178,9 @@ export default function UsersPage() {
     reason: "",
   });
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Generic confirmation for PRO / full access / unban / reset actions
+  const [confirmAction, setConfirmAction] = useState<ConfirmState | null>(null);
 
   // Delete Dialog — admin must type the Telegram ID to confirm
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; user: User | null; confirmText: string }>({
@@ -267,83 +284,148 @@ export default function UsersPage() {
     }
   };
 
-  const handleUnban = async (user: User) => {
+  // Every quick action goes through this confirmation dialog before hitting the API
+  const askConfirm = (opts: Omit<ConfirmState, "onConfirm">, onConfirm: () => Promise<void>) =>
+    setConfirmAction({ ...opts, onConfirm });
+
+  const runConfirmedAction = async () => {
+    if (!confirmAction) return;
+    setActionLoading(true);
     try {
-      await api.post(`/admin/users/${user.id}/unban`);
-      toast.success(`User has been unbanned`);
-      fetchUsers();
-      if (selectedUser?.id === user.id) {
-        handleOpenDetails(user);
-      }
-    } catch {
-      toast.error("Failed to unban user");
+      await confirmAction.onConfirm();
+    } finally {
+      setActionLoading(false);
+      setConfirmAction(null);
     }
   };
 
-  const handleGrantFullAccess = async (telegram_id: number) => {
-    try {
-      await api.post("/admin/users/grant-full-access", { telegram_id });
-      toast.success("Full access granted! User can now bypass invites.");
-      fetchUsers();
-      if (selectedUser?.telegram_id === telegram_id) {
-        handleOpenDetails(selectedUser);
-      }
-    } catch {
-      toast.error("Failed to grant full access");
-    }
+  const labelForTelegramId = (telegram_id: number) => {
+    const user = users.find((u) => u.telegram_id === telegram_id) ??
+      (selectedUser?.telegram_id === telegram_id ? selectedUser : null);
+    return user ? userLabel(user) : String(telegram_id);
   };
 
-  const handleRevokeFullAccess = async (telegram_id: number) => {
-    try {
-      await api.post("/admin/users/revoke-full-access", { telegram_id });
-      toast.success("Full access revoked. User must now use invites again.");
-      fetchUsers();
-      if (selectedUser?.telegram_id === telegram_id) {
-        handleOpenDetails(selectedUser);
+  const handleUnban = (user: User) =>
+    askConfirm(
+      {
+        title: "Unban User",
+        description: `Lift the ban on ${userLabel(user)}? They will be able to use TeleExam again and will be notified via Telegram.`,
+        confirmLabel: "Unban",
+      },
+      async () => {
+        try {
+          await api.post(`/admin/users/${user.id}/unban`);
+          toast.success(`User has been unbanned`);
+          fetchUsers();
+          if (selectedUser?.id === user.id) {
+            handleOpenDetails(user);
+          }
+        } catch {
+          toast.error("Failed to unban user");
+        }
       }
-    } catch {
-      toast.error("Failed to revoke full access");
-    }
-  };
+    );
 
-  const handleTogglePro = async (user: User) => {
+  const handleGrantFullAccess = (telegram_id: number) =>
+    askConfirm(
+      {
+        title: "Grant Unlimited Access",
+        description: `Grant ${labelForTelegramId(telegram_id)} unlimited access to all courses and exam years, bypassing invite locks? They will be notified via Telegram.`,
+        confirmLabel: "Grant Access",
+      },
+      async () => {
+        try {
+          await api.post("/admin/users/grant-full-access", { telegram_id });
+          toast.success("Full access granted! User can now bypass invites.");
+          fetchUsers();
+          if (selectedUser?.telegram_id === telegram_id) {
+            handleOpenDetails(selectedUser);
+          }
+        } catch {
+          toast.error("Failed to grant full access");
+        }
+      }
+    );
+
+  const handleRevokeFullAccess = (telegram_id: number) =>
+    askConfirm(
+      {
+        title: "Revoke Unlimited Access",
+        description: `Revoke unlimited access from ${labelForTelegramId(telegram_id)}? They will return to normal invite-based locking and will be notified via Telegram.`,
+        confirmLabel: "Revoke Access",
+        destructive: true,
+      },
+      async () => {
+        try {
+          await api.post("/admin/users/revoke-full-access", { telegram_id });
+          toast.success("Full access revoked. User must now use invites again.");
+          fetchUsers();
+          if (selectedUser?.telegram_id === telegram_id) {
+            handleOpenDetails(selectedUser);
+          }
+        } catch {
+          toast.error("Failed to revoke full access");
+        }
+      }
+    );
+
+  const handleTogglePro = (user: User) => {
     const newStatus = !user.is_pro;
-    try {
-      await api.post(`/admin/users/${user.id}/toggle-pro`, undefined, {
-        params: { is_pro: newStatus },
-      });
-      toast.success(
-        newStatus
-          ? `✨ ${user.first_name || user.telegram_username || "User"} is now PRO — notified via Telegram`
-          : `🔓 ${user.first_name || user.telegram_username || "User"} downgraded to Free — notified via Telegram`
-      );
-      fetchUsers();
-      if (selectedUser?.id === user.id) {
-        handleOpenDetails({ ...user, is_pro: newStatus });
+    askConfirm(
+      newStatus
+        ? {
+            title: "Upgrade to PRO",
+            description: `Make ${userLabel(user)} a PRO user? They will get AI Tutor, all content and unlimited questions, and will be notified via Telegram.`,
+            confirmLabel: "Make PRO",
+          }
+        : {
+            title: "Revoke PRO",
+            description: `Revoke PRO from ${userLabel(user)}? They will be downgraded to the Free tier and notified via Telegram.`,
+            confirmLabel: "Revoke PRO",
+            destructive: true,
+          },
+      async () => {
+        try {
+          await api.post(`/admin/users/${user.id}/toggle-pro`, undefined, {
+            params: { is_pro: newStatus },
+          });
+          toast.success(
+            newStatus
+              ? `✨ ${user.first_name || user.telegram_username || "User"} is now PRO — notified via Telegram`
+              : `🔓 ${user.first_name || user.telegram_username || "User"} downgraded to Free — notified via Telegram`
+          );
+          fetchUsers();
+          if (selectedUser?.id === user.id) {
+            handleOpenDetails({ ...user, is_pro: newStatus });
+          }
+        } catch {
+          toast.error("Failed to toggle PRO status");
+        }
       }
-    } catch {
-      toast.error("Failed to toggle PRO status");
-    }
+    );
   };
 
-  const handleResetAccess = async (user: User) => {
-    if (
-      !confirm(
-        `Reset ALL access for ${user.first_name || user.telegram_username || user.telegram_id}? This will remove PRO, full access, and reset invites to 0.`
-      )
-    )
-      return;
-    try {
-      await api.post(`/admin/users/${user.id}/reset-access`);
-      toast.success(`⚠️ Access fully reset for ${user.first_name || user.telegram_username || "User"}`);
-      fetchUsers();
-      if (selectedUser?.id === user.id) {
-        handleOpenDetails({ ...user, is_pro: false, is_full_access: false, invite_count: 0 });
+  const handleResetAccess = (user: User) =>
+    askConfirm(
+      {
+        title: "Reset All Access",
+        description: `Reset ALL access for ${userLabel(user)}? This removes PRO and full access and resets invites to 0. They will be notified via Telegram.`,
+        confirmLabel: "Reset All",
+        destructive: true,
+      },
+      async () => {
+        try {
+          await api.post(`/admin/users/${user.id}/reset-access`);
+          toast.success(`⚠️ Access fully reset for ${user.first_name || user.telegram_username || "User"}`);
+          fetchUsers();
+          if (selectedUser?.id === user.id) {
+            handleOpenDetails({ ...user, is_pro: false, is_full_access: false, invite_count: 0 });
+          }
+        } catch {
+          toast.error("Failed to reset user access");
+        }
       }
-    } catch {
-      toast.error("Failed to reset user access");
-    }
-  };
+    );
 
   const handleDelete = async () => {
     if (!deleteDialog.user) return;
@@ -1208,6 +1290,33 @@ export default function UsersPage() {
             >
               {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Confirm Ban
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Action Confirmation Dialog */}
+      <Dialog open={!!confirmAction} onOpenChange={(open) => !open && !actionLoading && setConfirmAction(null)}>
+        <DialogContent className={confirmAction?.destructive ? "border-2 border-destructive/20" : undefined}>
+          <DialogHeader>
+            <DialogTitle className={`flex items-center gap-2 ${confirmAction?.destructive ? "text-destructive" : ""}`}>
+              <ShieldAlert className="h-5 w-5" />
+              {confirmAction?.title}
+            </DialogTitle>
+            <DialogDescription>{confirmAction?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-4 mt-4">
+            <Button variant="ghost" className="h-9" onClick={() => setConfirmAction(null)} disabled={actionLoading}>
+              Cancel
+            </Button>
+            <Button
+              variant={confirmAction?.destructive ? "destructive" : "default"}
+              className="h-9"
+              onClick={runConfirmedAction}
+              disabled={actionLoading}
+            >
+              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {confirmAction?.confirmLabel}
             </Button>
           </DialogFooter>
         </DialogContent>
