@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -41,6 +42,7 @@ interface PaymentRequest {
   user_id: string;
   screenshot_url: string;
   status: "pending" | "approved" | "rejected";
+  rejection_reason: string | null;
   created_at: string;
 }
 
@@ -66,6 +68,14 @@ interface SenderInfo {
 
 type SenderState = SenderInfo | "loading" | "error";
 
+const REJECT_REASON_PRESETS = [
+  "This is not a payment receipt",
+  "The amount paid is incorrect",
+  "The screenshot is unclear or cropped",
+  "Payment was sent to the wrong account",
+  "This receipt was already used",
+];
+
 function senderName(sender: SenderInfo): string {
   const name = `${sender.first_name || ""} ${sender.last_name || ""}`.trim();
   return name || (sender.telegram_username ? `@${sender.telegram_username}` : String(sender.telegram_id));
@@ -79,6 +89,7 @@ export default function PaymentsPage() {
   const [selectedRequest, setSelectedRequest] = useState<PaymentRequest | null>(null);
   const [confirmDecision, setConfirmDecision] = useState<{ request: PaymentRequest; action: "approve" | "reject" } | null>(null);
   const [decisionLoading, setDecisionLoading] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   // Add Bank State
   const [openAddBank, setOpenAddBank] = useState(false);
@@ -120,6 +131,10 @@ export default function PaymentsPage() {
     fetchBanks();
     fetchRequests();
   }, []);
+
+  useEffect(() => {
+    setRejectReason("");
+  }, [confirmDecision]);
 
   // Load each receipt sender's profile once from the existing user detail endpoint
   useEffect(() => {
@@ -221,7 +236,11 @@ export default function PaymentsPage() {
     const { request, action } = confirmDecision;
     setDecisionLoading(true);
     try {
-      await axios.post(`${API_BASE}/admin/payments/requests/${request.id}/${action}`, {}, authHeaders);
+      const reason = rejectReason.trim();
+      await axios.post(`${API_BASE}/admin/payments/requests/${request.id}/${action}`, {}, {
+        ...authHeaders,
+        params: action === "reject" && reason ? { reason } : undefined,
+      });
       toast.success(
         action === "approve" ? "Payment request approved! User upgraded to PRO." : "Payment request rejected."
       );
@@ -342,6 +361,11 @@ export default function PaymentsPage() {
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground">Submitted: {new Date(req.created_at).toLocaleString()}</p>
+                        {req.status === "rejected" && req.rejection_reason && (
+                          <p className="text-xs rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 line-clamp-2">
+                            <span className="font-semibold text-destructive">Reason:</span> {req.rejection_reason}
+                          </p>
+                        )}
                         <div className="flex gap-2 pt-2">
                           <Button size="sm" variant="outline" className="w-full" onClick={() => setSelectedRequest(req)}>
                             Details
@@ -551,6 +575,18 @@ export default function PaymentsPage() {
 
                 {/* Sender details */}
                 <div className="space-y-3 text-sm">
+                  {selectedRequest.status === "rejected" && (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs space-y-1">
+                      <p className="font-semibold text-destructive flex items-center gap-1">
+                        <XCircle className="h-3.5 w-3.5" /> Rejection reason
+                      </p>
+                      <p className="whitespace-pre-wrap">
+                        {selectedRequest.rejection_reason || (
+                          <span className="italic text-muted-foreground">No reason given</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
                   <h4 className="text-xs font-semibold uppercase text-muted-foreground">Sender</h4>
                   {!sender || sender === "loading" ? (
                     <div className="flex items-center gap-2 text-muted-foreground">
@@ -660,6 +696,37 @@ export default function PaymentsPage() {
               })()}
             </DialogDescription>
           </DialogHeader>
+          {confirmDecision?.action === "reject" && (
+            <div className="space-y-2">
+              <Label className="text-xs uppercase tracking-widest text-muted-foreground">
+                Reason (sent to the user in the bot)
+              </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {REJECT_REASON_PRESETS.map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    size="sm"
+                    variant={rejectReason === preset ? "default" : "outline"}
+                    className="h-7 text-xs"
+                    onClick={() => setRejectReason(preset)}
+                  >
+                    {preset}
+                  </Button>
+                ))}
+              </div>
+              <Textarea
+                placeholder="Explain why the receipt was rejected..."
+                className="resize-none"
+                maxLength={500}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Optional. If left empty, the user gets the standard rejection message.
+              </p>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmDecision(null)} disabled={decisionLoading}>
               Cancel
