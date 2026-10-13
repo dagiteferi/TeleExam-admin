@@ -33,6 +33,7 @@ import {
   Clock,
   ShieldAlert,
   Check,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -163,6 +164,13 @@ export default function UsersPage() {
     reason: "",
   });
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Delete Dialog — admin must type the Telegram ID to confirm
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; user: User | null; confirmText: string }>({
+    open: false,
+    user: null,
+    confirmText: "",
+  });
 
   // Load departments once for the filter
   useEffect(() => {
@@ -334,6 +342,27 @@ export default function UsersPage() {
       }
     } catch {
       toast.error("Failed to reset user access");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteDialog.user) return;
+    const user = deleteDialog.user;
+    setActionLoading(true);
+    try {
+      await api.delete(`/admin/users/${user.id}`);
+      toast.success(`🗑️ ${user.first_name || user.telegram_username || user.telegram_id} deleted permanently`);
+      setDeleteDialog({ open: false, user: null, confirmText: "" });
+      if (selectedUser?.id === user.id) {
+        setDetailOpen(false);
+        setSelectedUser(null);
+        setUserDetail(null);
+      }
+      fetchUsers();
+    } catch {
+      toast.error("Failed to delete user");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -1115,6 +1144,17 @@ export default function UsersPage() {
                       <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset All
                     </Button>
                   )}
+
+                  {isSuperadmin && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => setDeleteDialog({ open: true, user: selectedUser, confirmText: "" })}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete User
+                    </Button>
+                  )}
                 </>
               )}
             </div>
@@ -1168,6 +1208,58 @@ export default function UsersPage() {
             >
               {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Confirm Ban
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Dialog */}
+      <Dialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => !open && setDeleteDialog({ open: false, user: null, confirmText: "" })}
+      >
+        <DialogContent className="border-2 border-destructive/20">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Delete User Permanently
+            </DialogTitle>
+            <DialogDescription>
+              This permanently deletes{" "}
+              <strong>
+                {deleteDialog.user?.telegram_username
+                  ? `@${deleteDialog.user.telegram_username}`
+                  : deleteDialog.user?.telegram_id}
+              </strong>{" "}
+              and all their exam results, answers, bookmarks and payment requests. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-4">
+            <Label className="text-xs uppercase tracking-widest text-muted-foreground">
+              Type the Telegram ID <span className="font-mono">{deleteDialog.user?.telegram_id}</span> to confirm
+            </Label>
+            <Input
+              className="font-mono"
+              value={deleteDialog.confirmText}
+              onChange={(e) => setDeleteDialog((s) => ({ ...s, confirmText: e.target.value }))}
+            />
+          </div>
+          <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-4">
+            <Button
+              variant="ghost"
+              className="h-9"
+              onClick={() => setDeleteDialog({ open: false, user: null, confirmText: "" })}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="h-9"
+              onClick={handleDelete}
+              disabled={actionLoading || deleteDialog.confirmText.trim() !== String(deleteDialog.user?.telegram_id)}
+            >
+              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete Forever
             </Button>
           </DialogFooter>
         </DialogContent>
