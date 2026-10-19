@@ -48,6 +48,8 @@ interface User {
   department_id: string | null;
   department_name: string | null;
   department_code: string | null;
+  secondary_department_name?: string | null;
+  secondary_department_unlocked?: boolean;
   is_pro: boolean;
   is_full_access: boolean;
   is_banned: boolean;
@@ -62,6 +64,25 @@ interface User {
   banned_until: string | null;
   exams_count?: number;
   avg_score?: number | null;
+}
+
+// Dual Degree: "active" = second department usable (PRO + approved dual payment, or
+// unlimited access); "locked" = second department chosen but not paid/approved, or PRO ended.
+function dualStatus(user: User): "active" | "locked" | null {
+  if (!user.secondary_department_name) return null;
+  return user.secondary_department_unlocked && (user.is_pro || user.is_full_access) ? "active" : "locked";
+}
+
+function DualBadge({ user }: { user: User }) {
+  const status = dualStatus(user);
+  if (!status) return null;
+  return status === "active" ? (
+    <Badge className="bg-violet-600 hover:bg-violet-700 text-white border-none font-semibold text-[10px]">DUAL</Badge>
+  ) : (
+    <Badge variant="outline" className="border-violet-500/50 text-violet-700 dark:text-violet-300 text-[10px]">
+      DUAL LOCKED
+    </Badge>
+  );
 }
 
 interface UserExamSummary {
@@ -631,6 +652,11 @@ export default function UsersPage() {
                       ) : (
                         <span className="text-xs text-muted-foreground italic">Not selected</span>
                       )}
+                      {user.secondary_department_name && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          + {user.secondary_department_name}
+                        </p>
+                      )}
                     </TableCell>
 
                     {/* Access Tier */}
@@ -646,6 +672,7 @@ export default function UsersPage() {
                         >
                           {user.is_pro ? "PRO" : "STANDARD"}
                         </Badge>
+                        <DualBadge user={user} />
                         {user.is_full_access && (
                           <Badge className="bg-green-600 text-white border-none text-[10px]">
                             UNLIMITED
@@ -813,6 +840,7 @@ export default function UsersPage() {
                     {selectedUser?.is_pro && (
                       <Badge className="bg-amber-500 text-white font-bold text-[10px]">PRO</Badge>
                     )}
+                    {userDetail && <DualBadge user={userDetail} />}
                     {selectedUser?.is_full_access && (
                       <Badge className="bg-green-600 text-white font-bold text-[10px]">UNLIMITED</Badge>
                     )}
@@ -875,6 +903,15 @@ export default function UsersPage() {
                       </h4>
                       {userDetail.department_code && (
                         <p className="text-xs text-muted-foreground">Code: {userDetail.department_code}</p>
+                      )}
+                      {userDetail.secondary_department_name && (
+                        <p className="text-xs mt-1">
+                          <span className="font-semibold text-violet-700 dark:text-violet-300">Dual Degree:</span>{" "}
+                          {userDetail.secondary_department_name}{" "}
+                          <span className="text-muted-foreground">
+                            ({dualStatus(userDetail) === "active" ? "unlocked" : "locked — dual payment not approved or PRO ended"})
+                          </span>
+                        </p>
                       )}
                     </div>
                   </div>

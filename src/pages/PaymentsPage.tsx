@@ -43,6 +43,9 @@ interface PaymentRequest {
   screenshot_url: string;
   status: "pending" | "approved" | "rejected";
   rejection_reason: string | null;
+  kind: "pro" | "dual_department";
+  target_department_name: string | null;
+  amount_birr: number | null;
   created_at: string;
 }
 
@@ -55,6 +58,8 @@ interface SenderInfo {
   last_name: string | null;
   department_name: string | null;
   department_code: string | null;
+  secondary_department_name: string | null;
+  secondary_department_unlocked: boolean;
   is_pro: boolean;
   is_full_access: boolean;
   is_banned: boolean;
@@ -75,6 +80,30 @@ const REJECT_REASON_PRESETS = [
   "Payment was sent to the wrong account",
   "This receipt was already used",
 ];
+
+const isDual = (req: PaymentRequest) => req.kind === "dual_department";
+
+function paymentLabel(req: PaymentRequest): string {
+  if (!isDual(req)) return "PRO Upgrade";
+  return req.target_department_name ? `Dual Degree · ${req.target_department_name}` : "Dual Degree";
+}
+
+function PaymentKindBadge({ request }: { request: PaymentRequest }) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        isDual(request)
+          ? "border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+          : "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+      }
+    >
+      {isDual(request) ? "🎓 " : "⭐ "}
+      {paymentLabel(request)}
+      {request.amount_birr ? ` · ${request.amount_birr} Birr` : ""}
+    </Badge>
+  );
+}
 
 function senderName(sender: SenderInfo): string {
   const name = `${sender.first_name || ""} ${sender.last_name || ""}`.trim();
@@ -242,7 +271,11 @@ export default function PaymentsPage() {
         params: action === "reject" && reason ? { reason } : undefined,
       });
       toast.success(
-        action === "approve" ? "Payment request approved! User upgraded to PRO." : "Payment request rejected."
+        action === "reject"
+          ? "Payment request rejected."
+          : isDual(request)
+          ? "Dual Degree payment approved! Second department unlocked."
+          : "Payment request approved! User upgraded to PRO."
       );
       setConfirmDecision(null);
       setSelectedRequest(null);
@@ -254,7 +287,14 @@ export default function PaymentsPage() {
       });
       fetchRequests();
     } catch (err) {
-      toast.error(action === "approve" ? "Failed to approve payment request" : "Failed to reject payment request");
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      toast.error(
+        typeof detail === "string"
+          ? detail
+          : action === "approve"
+          ? "Failed to approve payment request"
+          : "Failed to reject payment request"
+      );
     } finally {
       setDecisionLoading(false);
     }
@@ -277,6 +317,9 @@ export default function PaymentsPage() {
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="font-semibold text-sm">{senderName(sender)}</span>
           {sender.is_pro && <Badge className="bg-amber-500 text-white text-[10px]">PRO</Badge>}
+          {sender.secondary_department_name && sender.secondary_department_unlocked && (sender.is_pro || sender.is_full_access) && (
+            <Badge className="bg-violet-600 text-white text-[10px]">DUAL</Badge>
+          )}
           {sender.is_banned && <Badge variant="destructive" className="text-[10px]">BANNED</Badge>}
         </div>
         <p className="text-xs text-muted-foreground">
@@ -296,7 +339,7 @@ export default function PaymentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Payments & Bank Management</h1>
-          <p className="text-muted-foreground">Manage bank accounts displayed to users and verify PRO payment requests.</p>
+          <p className="text-muted-foreground">Manage bank accounts displayed to users and verify PRO and Dual Degree payment requests.</p>
         </div>
         <Button onClick={() => { fetchBanks(); fetchRequests(); }} variant="outline">
           <RefreshCw className="mr-2 h-4 w-4" /> Refresh
@@ -360,6 +403,7 @@ export default function PaymentsPage() {
                             {req.status}
                           </Badge>
                         </div>
+                        <PaymentKindBadge request={req} />
                         <p className="text-xs text-muted-foreground">Submitted: {new Date(req.created_at).toLocaleString()}</p>
                         {req.status === "rejected" && req.rejection_reason && (
                           <p className="text-xs rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 line-clamp-2">
@@ -533,8 +577,9 @@ export default function PaymentsPage() {
       <Dialog open={!!selectedRequest} onOpenChange={(open) => { if (!open) setSelectedRequest(null); }}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
               Payment Receipt
+              {selectedRequest && <PaymentKindBadge request={selectedRequest} />}
               {selectedRequest && (
                 <Badge
                   variant={
@@ -586,6 +631,21 @@ export default function PaymentsPage() {
                         )}
                       </p>
                     </div>
+                  )}
+                  <h4 className="text-xs font-semibold uppercase text-muted-foreground">Payment</h4>
+                  <div className="rounded-lg border divide-y text-xs">
+                    <DetailRow label="Type">{isDual(selectedRequest) ? "Dual Degree (second department)" : "PRO upgrade"}</DetailRow>
+                    <DetailRow label="Expected amount">
+                      {selectedRequest.amount_birr ? `${selectedRequest.amount_birr} Birr` : "—"}
+                    </DetailRow>
+                    {isDual(selectedRequest) && (
+                      <DetailRow label="Department to unlock">{selectedRequest.target_department_name || "—"}</DetailRow>
+                    )}
+                  </div>
+                  {isDual(selectedRequest) && sender && typeof sender === "object" && !sender.is_pro && !sender.is_full_access && (
+                    <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                      This user is not PRO yet. A Dual Degree payment cannot be approved until their PRO payment is approved.
+                    </p>
                   )}
                   <h4 className="text-xs font-semibold uppercase text-muted-foreground">Sender</h4>
                   {!sender || sender === "loading" ? (
@@ -640,6 +700,12 @@ export default function PaymentsPage() {
                             ? `${sender.department_name}${sender.department_code ? ` (${sender.department_code})` : ""}`
                             : "Not selected"}
                         </DetailRow>
+                        {sender.secondary_department_name && (
+                          <DetailRow label="Second department">
+                            {sender.secondary_department_name}
+                            {sender.secondary_department_unlocked ? " (unlocked)" : " (locked)"}
+                          </DetailRow>
+                        )}
                         <DetailRow label="Joined">{new Date(sender.created_at).toLocaleString()}</DetailRow>
                         <DetailRow label="Exams taken">{sender.total_exams_taken}</DetailRow>
                         <DetailRow label="Average score">
@@ -690,9 +756,14 @@ export default function PaymentsPage() {
               {(() => {
                 const sender = confirmDecision ? senders[confirmDecision.request.user_id] : undefined;
                 const who = sender && typeof sender === "object" ? senderName(sender) : "this user";
-                return confirmDecision?.action === "approve"
-                  ? `Approve the payment from ${who}? They will be upgraded to PRO and notified via Telegram.`
-                  : `Reject the payment from ${who}? They will be notified via Telegram that the receipt could not be verified.`;
+                const req = confirmDecision?.request;
+                const amount = req?.amount_birr ? ` (${req.amount_birr} Birr)` : "";
+                if (confirmDecision?.action !== "approve") {
+                  return `Reject the ${req ? paymentLabel(req) : ""} payment${amount} from ${who}? They will be notified via Telegram that the receipt could not be verified.`;
+                }
+                return req && isDual(req)
+                  ? `Approve the Dual Degree payment${amount} from ${who}? Their second department${req.target_department_name ? ` (${req.target_department_name})` : ""} will be unlocked. This does NOT make them PRO.`
+                  : `Approve the PRO payment${amount} from ${who}? They will be upgraded to PRO and notified via Telegram.`;
               })()}
             </DialogDescription>
           </DialogHeader>
