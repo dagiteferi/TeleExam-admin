@@ -203,6 +203,13 @@ export default function UsersPage() {
   // Generic confirmation for PRO / full access / unban / reset actions
   const [confirmAction, setConfirmAction] = useState<ConfirmState | null>(null);
 
+  // Make Dual dialog — admin picks the second department
+  const [dualDialog, setDualDialog] = useState<{ open: boolean; user: User | null; departmentId: string }>({
+    open: false,
+    user: null,
+    departmentId: "",
+  });
+
   // Delete Dialog — admin must type the Telegram ID to confirm
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; user: User | null; confirmText: string }>({
     open: false,
@@ -425,6 +432,48 @@ export default function UsersPage() {
       }
     );
   };
+
+  const apiErrorDetail = (err: unknown): string | undefined => {
+    const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+    return typeof detail === "string" ? detail : undefined;
+  };
+
+  const handleGrantDual = async () => {
+    const { user, departmentId } = dualDialog;
+    if (!user || !departmentId) return;
+    setActionLoading(true);
+    try {
+      await api.post(`/admin/users/${user.id}/grant-dual`, { department_id: departmentId });
+      toast.success(`🎓 ${user.first_name || user.telegram_username || "User"} now has Dual Degree — notified via Telegram`);
+      setDualDialog({ open: false, user: null, departmentId: "" });
+      fetchUsers();
+      if (selectedUser?.id === user.id) handleOpenDetails(user);
+    } catch (err) {
+      toast.error(apiErrorDetail(err) || "Failed to grant Dual Degree");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRevokeDual = (user: User) =>
+    askConfirm(
+      {
+        title: "Remove Dual Degree",
+        description: `Remove the Dual Degree (${user.secondary_department_name || "second department"}) from ${userLabel(user)}? They go back to their main department and are notified via Telegram. Their results and saved questions are kept.`,
+        confirmLabel: "Remove Dual",
+        destructive: true,
+      },
+      async () => {
+        try {
+          await api.post(`/admin/users/${user.id}/revoke-dual`);
+          toast.success(`Dual Degree removed from ${user.first_name || user.telegram_username || "User"} — notified via Telegram`);
+          fetchUsers();
+          if (selectedUser?.id === user.id) handleOpenDetails(user);
+        } catch (err) {
+          toast.error(apiErrorDetail(err) || "Failed to remove Dual Degree");
+        }
+      }
+    );
 
   const handleResetAccess = (user: User) =>
     askConfirm(
@@ -972,6 +1021,18 @@ export default function UsersPage() {
                         </Badge>
                       </div>
                       <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Dual Degree:</span>
+                        {dualStatus(userDetail) === "active" ? (
+                          <Badge className="bg-violet-600">Active · {userDetail.secondary_department_name}</Badge>
+                        ) : dualStatus(userDetail) === "locked" ? (
+                          <Badge variant="outline" className="border-violet-500/50">
+                            Locked · {userDetail.secondary_department_name}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">None</Badge>
+                        )}
+                      </div>
+                      <div className="flex justify-between items-center">
                         <span className="text-muted-foreground">Unlimited Access Bypass:</span>
                         <Badge variant={userDetail.is_full_access ? "default" : "outline"} className={userDetail.is_full_access ? "bg-green-600" : ""}>
                           {userDetail.is_full_access ? "Granted" : "Standard Locking"}
@@ -1207,6 +1268,28 @@ export default function UsersPage() {
                     )}
                   </Button>
 
+                  {(userDetail ?? selectedUser).secondary_department_name ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => handleRevokeDual(userDetail ?? selectedUser)}
+                    >
+                      <GraduationCap className="h-3.5 w-3.5 mr-1 text-violet-500" /> Remove Dual
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      disabled={!selectedUser.department_id}
+                      title={selectedUser.department_id ? undefined : "The user has no main department yet"}
+                      onClick={() => setDualDialog({ open: true, user: selectedUser, departmentId: "" })}
+                    >
+                      <GraduationCap className="h-3.5 w-3.5 mr-1 text-violet-500" /> Make Dual
+                    </Button>
+                  )}
+
                   {isSuperadmin && (
                     <Button
                       variant="outline"
@@ -1354,6 +1437,66 @@ export default function UsersPage() {
             >
               {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {confirmAction?.confirmLabel}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Make Dual Dialog */}
+      <Dialog
+        open={dualDialog.open}
+        onOpenChange={(open) => {
+          if (!open && !actionLoading) setDualDialog({ open: false, user: null, departmentId: "" });
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GraduationCap className="h-5 w-5 text-violet-500" /> Make Dual Degree
+            </DialogTitle>
+            <DialogDescription>
+              Unlock a second department for {dualDialog.user ? userLabel(dualDialog.user) : "this user"} without a payment.
+              Dual Degree is an add-on to PRO, so the user must already be PRO. They will be notified via Telegram.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label className="text-xs uppercase tracking-widest text-muted-foreground">Second department</Label>
+            <Select
+              value={dualDialog.departmentId}
+              onValueChange={(departmentId) => setDualDialog((d) => ({ ...d, departmentId }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a department" />
+              </SelectTrigger>
+              <SelectContent>
+                {departments
+                  .filter((d) => d.is_active !== false && d.id !== dualDialog.user?.department_id)
+                  .map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {dualDialog.user && !dualDialog.user.is_pro && !dualDialog.user.is_full_access && (
+              <p className="text-xs text-destructive">This user is not PRO. Make them PRO first.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setDualDialog({ open: false, user: null, departmentId: "" })}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-violet-600 hover:bg-violet-700"
+              onClick={handleGrantDual}
+              disabled={actionLoading || !dualDialog.departmentId}
+            >
+              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Make Dual
             </Button>
           </DialogFooter>
         </DialogContent>
