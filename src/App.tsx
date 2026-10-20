@@ -11,6 +11,7 @@ import UsersPage from "@/pages/UsersPage";
 import AdminsPage from "@/pages/AdminsPage";
 import ExamsPage from "@/pages/ExamsPage";
 import PaymentsPage from "@/pages/PaymentsPage";
+import AnnouncementsPage from "@/pages/AnnouncementsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "@/pages/NotFound";
 
@@ -24,6 +25,7 @@ const App = () => (
           <Route element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/payments" element={<ProtectedRoute superAdminOnly><PaymentsPage /></ProtectedRoute>} />
+            <Route path="/announcements" element={<ProtectedRoute superAdminOnly><AnnouncementsPage /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute permission="view_stats"><AnalyticsPage /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute permission="view_users"><UsersPage /></ProtectedRoute>} />
             <Route path="/exams" element={<ProtectedRoute permission="manage_content"><ExamsPage /></ProtectedRoute>} />

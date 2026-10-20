@@ -6,6 +6,7 @@ import {
   Bot,
   BookOpen,
   CreditCard,
+  Megaphone,
   Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
@@ -36,6 +37,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Payments", url: "/payments", icon: CreditCard, superAdminOnly: true },
+  { title: "Announcements", url: "/announcements", icon: Megaphone, superAdminOnly: true },
   { title: "Analytics", url: "/analytics", icon: BarChart3, permission: "view_stats" },
   { title: "Users", url: "/users", icon: Users, permission: "view_users" },
   { title: "Exams", url: "/exams", icon: BookOpen, permission: "manage_content" },
