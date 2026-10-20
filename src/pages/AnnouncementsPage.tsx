@@ -1,18 +1,37 @@
 import { useCallback, useEffect, useState } from "react";
-import { Megaphone, Send, RefreshCw, Loader2, Users, Ban } from "lucide-react";
+import { Megaphone, Send, RefreshCw, Loader2, Users, Ban, Search, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import api from "@/lib/api";
 
-type Audience = "all" | "pro" | "free" | "dual" | "department" | "user";
+type Audience = "all" | "pro" | "free" | "dual" | "department" | "users";
+
+// Subset of GET /admin/users/ used by the user picker
+interface PickUser {
+  id: string;
+  telegram_id: number;
+  telegram_username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  department_name: string | null;
+  is_pro: boolean;
+  is_banned: boolean;
+}
+
+function pickUserName(u: PickUser): string {
+  const name = `${u.first_name || ""} ${u.last_name || ""}`.trim();
+  return name || (u.telegram_username ? `@${u.telegram_username}` : String(u.telegram_id));
+}
 
 interface DepartmentItem {
   id: string;
@@ -41,7 +60,7 @@ const AUDIENCES: { value: Audience; label: string; hint: string }[] = [
   { value: "free", label: "Free users", hint: "Users without PRO" },
   { value: "dual", label: "Dual Degree users", hint: "Users with an active second department" },
   { value: "department", label: "A department", hint: "Main department, plus dual students who have it unlocked" },
-  { value: "user", label: "One user", hint: "A single user, by Telegram ID" },
+  { value: "users", label: "Selected users", hint: "Pick one or more users from the list" },
 ];
 
 // Keep in sync with MAX_ANNOUNCEMENT_LENGTH in the backend.
@@ -49,7 +68,11 @@ const MAX_LENGTH = 3500;
 
 function audienceLabel(a: Announcement): string {
   if (a.audience === "department") return `Department · ${a.department_name || "deleted"}`;
-  if (a.audience === "user") return `User · ${a.target_user_label || "deleted"}`;
+  if (a.audience === "users") {
+    return a.recipient_count === 1 && a.target_user_label
+      ? `User · ${a.target_user_label}`
+      : `Selected users · ${a.recipient_count}`;
+  }
   return AUDIENCES.find((x) => x.value === a.audience)?.label || a.audience;
 }
 
@@ -65,7 +88,10 @@ export default function AnnouncementsPage() {
   const [text, setText] = useState("");
   const [audience, setAudience] = useState<Audience>("all");
   const [departmentId, setDepartmentId] = useState("");
-  const [telegramId, setTelegramId] = useState("");
+  const [selected, setSelected] = useState<Record<string, PickUser>>({});
+  const [userSearch, setUserSearch] = useState("");
+  const [userResults, setUserResults] = useState<PickUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [recipients, setRecipients] = useState<number | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -74,17 +100,52 @@ export default function AnnouncementsPage() {
   const [history, setHistory] = useState<Announcement[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
 
+  const selectedIds = Object.keys(selected);
   const targetReady =
-    audience === "department" ? !!departmentId : audience === "user" ? /^\d+$/.test(telegramId.trim()) : true;
+    audience === "department" ? !!departmentId : audience === "users" ? selectedIds.length > 0 : true;
 
+  const selectedKey = selectedIds.sort().join(",");
   const targetPayload = useCallback(
     () => ({
       audience,
       department_id: audience === "department" ? departmentId : undefined,
-      telegram_id: audience === "user" ? Number(telegramId.trim()) : undefined,
+      user_ids: audience === "users" ? (selectedKey ? selectedKey.split(",") : []) : undefined,
     }),
-    [audience, departmentId, telegramId]
+    [audience, departmentId, selectedKey]
   );
+
+  // Users for the picker: searchable, banned users left out (they never get announcements)
+  useEffect(() => {
+    if (audience !== "users") return;
+    setUsersLoading(true);
+    const timer = setTimeout(() => {
+      api
+        .get("/admin/users/", { params: { limit: 100, search: userSearch.trim() || undefined, is_banned: false } })
+        .then((r) => setUserResults(Array.isArray(r.data) ? r.data : []))
+        .catch(() => toast.error("Failed to load users"))
+        .finally(() => setUsersLoading(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [audience, userSearch]);
+
+  const toggleUser = (u: PickUser) =>
+    setSelected((prev) => {
+      const next = { ...prev };
+      if (next[u.id]) delete next[u.id];
+      else next[u.id] = u;
+      return next;
+    });
+
+  const allShownSelected = userResults.length > 0 && userResults.every((u) => selected[u.id]);
+  const toggleAllShown = () =>
+    setSelected((prev) => {
+      const next = { ...prev };
+      userResults.forEach((u) => {
+        if (allShownSelected) delete next[u.id];
+        else next[u.id] = u;
+      });
+      return next;
+    });
 
   const fetchHistory = useCallback(() => {
     setHistoryLoading(true);
@@ -211,18 +272,84 @@ export default function AnnouncementsPage() {
               </div>
             )}
 
-            {audience === "user" && (
-              <div className="space-y-2">
-                <Label>Telegram ID</Label>
-                <Input
-                  inputMode="numeric"
-                  placeholder="e.g. 1234461442 (shown on the Users page)"
-                  value={telegramId}
-                  onChange={(e) => setTelegramId(e.target.value)}
-                />
-              </div>
-            )}
           </div>
+
+          {audience === "users" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <Label>Users</Label>
+                {selectedIds.length > 0 && (
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelected({})}>
+                    Clear selection
+                  </Button>
+                )}
+              </div>
+
+              {selectedIds.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.values(selected).map((u) => (
+                    <Badge key={u.id} variant="secondary" className="gap-1 pr-1">
+                      {pickUserName(u)}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${pickUserName(u)}`}
+                        className="rounded-full p-0.5 hover:bg-muted-foreground/20"
+                        onClick={() => toggleUser(u)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+
+              <div className="rounded-lg border">
+                <div className="flex items-center gap-2 border-b px-3 py-2">
+                  <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <Input
+                    className="h-8 border-0 shadow-none focus-visible:ring-0 px-0"
+                    placeholder="Search by name, @username or Telegram ID"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                  />
+                  {usersLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />}
+                </div>
+                {userResults.length > 0 && (
+                  <label className="flex items-center gap-3 border-b px-3 py-2 text-xs text-muted-foreground cursor-pointer">
+                    <Checkbox checked={allShownSelected} onCheckedChange={toggleAllShown} />
+                    Select all {userResults.length} shown
+                  </label>
+                )}
+                <ScrollArea className="h-64">
+                  {userResults.length === 0 && !usersLoading ? (
+                    <p className="p-4 text-sm text-muted-foreground">No users found.</p>
+                  ) : (
+                    userResults.map((u) => (
+                      <label
+                        key={u.id}
+                        className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer border-b last:border-b-0"
+                      >
+                        <Checkbox checked={!!selected[u.id]} onCheckedChange={() => toggleUser(u)} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">
+                            {pickUserName(u)}
+                            {u.is_pro && <Badge className="ml-2 bg-amber-500 text-white text-[10px]">PRO</Badge>}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {u.telegram_username ? `@${u.telegram_username} · ` : ""}
+                            {u.department_name || "No department"} · ID {u.telegram_id}
+                          </p>
+                        </div>
+                      </label>
+                    ))
+                  )}
+                </ScrollArea>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {selectedIds.length} selected. Search to find more; your selection is kept.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Message</Label>
@@ -244,7 +371,9 @@ export default function AnnouncementsPage() {
               {previewError ? (
                 <span className="text-destructive">{previewError}</span>
               ) : !targetReady ? (
-                <span className="text-muted-foreground">Choose who to send it to</span>
+                <span className="text-muted-foreground">
+                  {audience === "users" ? "Select at least one user" : "Choose who to send it to"}
+                </span>
               ) : recipients === null ? (
                 <span className="text-muted-foreground">Counting recipients…</span>
               ) : (
@@ -327,7 +456,10 @@ export default function AnnouncementsPage() {
             <DialogDescription>
               This sends the message below to <b>{recipients}</b> user{recipients === 1 ? "" : "s"} ({selectedAudience?.label}
               {audience === "department" ? ` · ${departments.find((d) => d.id === departmentId)?.name || ""}` : ""}
-              {audience === "user" ? ` · ${telegramId.trim()}` : ""}). It can't be unsent once delivered.
+              {audience === "users" && selectedIds.length <= 3
+                ? ` · ${Object.values(selected).map(pickUserName).join(", ")}`
+                : ""}
+              ). It can't be unsent once delivered.
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">
