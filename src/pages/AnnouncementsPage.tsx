@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import { Megaphone, Send, RefreshCw, Loader2, Users, Ban, Search, X } from "lucide-react";
+import {
+  Megaphone,
+  Send,
+  RefreshCw,
+  Loader2,
+  Users,
+  Ban,
+  Search,
+  X,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  ListChecks,
+} from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,6 +79,52 @@ const AUDIENCES: { value: Audience; label: string; hint: string }[] = [
   { value: "users", label: "Selected users", hint: "Pick one or more users from the list" },
 ];
 
+type DeliveryStatus = "pending" | "sent" | "failed" | "cancelled";
+
+interface Delivery {
+  user_id: string;
+  name: string;
+  telegram_username: string | null;
+  telegram_id: number;
+  status: DeliveryStatus;
+  attempts: number;
+  last_attempt_at: string | null;
+  sent_at: string | null;
+  error: string | null;
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
+  return new Date(iso).toLocaleString();
+}
+
+// Plain-language reason for each recipient's state
+function deliveryReason(d: Delivery): string {
+  if (d.status === "sent") return `Delivered ${timeAgo(d.sent_at)}`;
+  if (d.status === "cancelled") return "You stopped this announcement before it reached them";
+  if (d.status === "failed") {
+    const e = (d.error || "").toLowerCase();
+    if (e.includes("blocked")) return "Blocked the bot — can't receive messages";
+    if (e.includes("deactivated")) return "Telegram account deleted";
+    if (e.includes("chat not found")) return "Never started the bot";
+    return d.error || "Failed";
+  }
+  return d.attempts > 0
+    ? `Busy in the bot (exam, AI chat or payment) — gets it as soon as they finish · checked ${timeAgo(d.last_attempt_at)}`
+    : "In the queue — sending now";
+}
+
+const STATUS_STYLE: Record<DeliveryStatus, { label: string; className: string }> = {
+  sent: { label: "Delivered", className: "bg-emerald-600 hover:bg-emerald-600 text-white" },
+  pending: { label: "Waiting", className: "bg-amber-500 hover:bg-amber-500 text-white" },
+  failed: { label: "Failed", className: "bg-destructive hover:bg-destructive text-destructive-foreground" },
+  cancelled: { label: "Stopped", className: "bg-muted text-muted-foreground hover:bg-muted" },
+};
+
 // Keep in sync with MAX_ANNOUNCEMENT_LENGTH in the backend.
 const MAX_LENGTH = 3500;
 
@@ -98,6 +160,11 @@ export default function AnnouncementsPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [history, setHistory] = useState<Announcement[]>([]);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [detailsFor, setDetailsFor] = useState<Announcement | null>(null);
+  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [deliveryFilter, setDeliveryFilter] = useState<"all" | DeliveryStatus>("all");
   const [historyLoading, setHistoryLoading] = useState(true);
 
   const selectedIds = Object.keys(selected);
@@ -167,7 +234,7 @@ export default function AnnouncementsPage() {
   // Refresh delivery progress while messages are still waiting to be sent
   useEffect(() => {
     if (!history.some((a) => a.pending_count > 0)) return;
-    const timer = setInterval(fetchHistory, 15000);
+    const timer = setInterval(fetchHistory, 5000);
     return () => clearInterval(timer);
   }, [history, fetchHistory]);
 
@@ -199,6 +266,34 @@ export default function AnnouncementsPage() {
       setSending(false);
     }
   };
+
+  const loadDeliveries = useCallback((a: Announcement) => {
+    setDeliveriesLoading(true);
+    api
+      .get(`/admin/announcements/${a.id}/deliveries`)
+      .then((r) => setDeliveries(Array.isArray(r.data) ? r.data : []))
+      .catch(() => toast.error("Failed to load recipients"))
+      .finally(() => setDeliveriesLoading(false));
+  }, []);
+
+  const openDetails = (a: Announcement, filter: "all" | DeliveryStatus = "all") => {
+    setDetailsFor(a);
+    setDeliveryFilter(filter);
+    setDeliveries([]);
+    loadDeliveries(a);
+  };
+
+  // Keep the open recipient list live while messages are still waiting
+  useEffect(() => {
+    if (!detailsFor) return;
+    const current = history.find((a) => a.id === detailsFor.id);
+    if (current && current !== detailsFor) {
+      setDetailsFor(current);
+      loadDeliveries(current);
+    }
+  }, [history, detailsFor, loadDeliveries]);
+
+  const shownDeliveries = deliveryFilter === "all" ? deliveries : deliveries.filter((d) => d.status === deliveryFilter);
 
   const handleCancel = async (a: Announcement) => {
     if (!confirm(`Stop sending this announcement to the ${a.pending_count} user(s) who haven't received it yet?`)) return;
@@ -392,9 +487,11 @@ export default function AnnouncementsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Sent announcements</CardTitle>
-          <CardDescription>Delivery progress updates automatically while messages are waiting.</CardDescription>
+          <CardDescription>
+            Counts update every few seconds while messages are waiting. Click a number to see exactly who it is.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           {historyLoading && history.length === 0 ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -404,43 +501,103 @@ export default function AnnouncementsPage() {
           ) : (
             history.map((a) => {
               const done = a.sent_count + a.failed_count + a.cancelled_count;
+              const isOpen = !!expanded[a.id];
+              const long = a.text.length > 220 || a.text.split("\n").length > 4;
               return (
-                <div key={a.id} className="rounded-lg border p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                <div key={a.id} className="rounded-xl border bg-card overflow-hidden">
+                  {/* Header: audience, who and when */}
+                  <div className="flex items-center justify-between gap-2 flex-wrap border-b bg-muted/30 px-4 py-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="secondary">{audienceLabel(a)}</Badge>
+                      <Badge variant="secondary" className="font-semibold">
+                        {audienceLabel(a)}
+                      </Badge>
                       <span className="text-xs text-muted-foreground">
                         {new Date(a.created_at).toLocaleString()}
-                        {a.created_by ? ` · ${a.created_by}` : ""}
+                        {a.created_by ? ` · by ${a.created_by}` : ""}
                       </span>
                     </div>
-                    {a.pending_count > 0 && (
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" onClick={() => handleCancel(a)}>
-                        <Ban className="mr-1 h-3.5 w-3.5" /> Stop sending
+                    <div className="flex items-center gap-1">
+                      {a.pending_count > 0 && (
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" onClick={() => handleCancel(a)}>
+                          <Ban className="mr-1 h-3.5 w-3.5" /> Stop sending
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openDetails(a)}>
+                        <ListChecks className="mr-1 h-3.5 w-3.5" /> Recipients
                       </Button>
-                    )}
+                    </div>
                   </div>
-                  <p className="text-sm whitespace-pre-wrap line-clamp-4">{a.text}</p>
-                  <Progress value={a.recipient_count ? (done / a.recipient_count) * 100 : 100} className="h-1.5" />
-                  <div className="flex gap-3 text-xs flex-wrap">
-                    <span>
-                      ✅ Sent <b>{a.sent_count}</b>/{a.recipient_count}
-                    </span>
-                    {a.pending_count > 0 && (
-                      <span className="text-muted-foreground">
-                        ⏳ Waiting <b>{a.pending_count}</b> (busy or not yet sent)
+
+                  {/* The message, as users see it */}
+                  <div className="px-4 py-3">
+                    <div className="rounded-lg border-l-4 border-primary bg-muted/40 px-3 py-2.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                        📢 Announcement
+                      </p>
+                      <p className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${!isOpen && long ? "line-clamp-4" : ""}`}>
+                        {a.text}
+                      </p>
+                      {long && (
+                        <button
+                          type="button"
+                          className="mt-1 text-xs font-medium text-primary inline-flex items-center gap-0.5"
+                          onClick={() => setExpanded((e) => ({ ...e, [a.id]: !isOpen }))}
+                        >
+                          {isOpen ? (
+                            <>
+                              Show less <ChevronUp className="h-3 w-3" />
+                            </>
+                          ) : (
+                            <>
+                              Show full message <ChevronDown className="h-3 w-3" />
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Delivery summary */}
+                  <div className="px-4 pb-4 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        {done}/{a.recipient_count} processed
                       </span>
-                    )}
-                    {a.failed_count > 0 && (
-                      <span className="text-destructive">
-                        ⚠️ Failed <b>{a.failed_count}</b> (blocked the bot)
-                      </span>
-                    )}
-                    {a.cancelled_count > 0 && (
-                      <span className="text-muted-foreground">
-                        Stopped <b>{a.cancelled_count}</b>
-                      </span>
-                    )}
+                      <span>{a.recipient_count ? Math.round((a.sent_count / a.recipient_count) * 100) : 0}% delivered</span>
+                    </div>
+                    <Progress value={a.recipient_count ? (done / a.recipient_count) * 100 : 100} className="h-2" />
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openDetails(a, "sent")}
+                        className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-left hover:bg-emerald-500/15"
+                      >
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Delivered
+                        </span>
+                        <span className="text-xl font-bold">{a.sent_count}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openDetails(a, "pending")}
+                        className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left hover:bg-amber-500/15"
+                      >
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                          <Clock className="h-3.5 w-3.5" /> Waiting
+                        </span>
+                        <span className="text-xl font-bold">{a.pending_count}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openDetails(a, "failed")}
+                        className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-left hover:bg-destructive/15"
+                      >
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-destructive">
+                          <AlertTriangle className="h-3.5 w-3.5" /> Not received
+                        </span>
+                        <span className="text-xl font-bold">{a.failed_count + a.cancelled_count}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -448,6 +605,59 @@ export default function AnnouncementsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Recipients dialog: who got it, who is waiting and why, who failed and why */}
+      <Dialog open={!!detailsFor} onOpenChange={(open) => !open && setDetailsFor(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListChecks className="h-5 w-5 text-primary" /> Recipients
+            </DialogTitle>
+            <DialogDescription>
+              {detailsFor ? `${audienceLabel(detailsFor)} · sent ${new Date(detailsFor.created_at).toLocaleString()}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {detailsFor && (
+            <Tabs value={deliveryFilter} onValueChange={(v) => setDeliveryFilter(v as typeof deliveryFilter)}>
+              <TabsList className="grid grid-cols-4">
+                <TabsTrigger value="all">All ({detailsFor.recipient_count})</TabsTrigger>
+                <TabsTrigger value="sent">Delivered ({detailsFor.sent_count})</TabsTrigger>
+                <TabsTrigger value="pending">Waiting ({detailsFor.pending_count})</TabsTrigger>
+                <TabsTrigger value="failed">Failed ({detailsFor.failed_count})</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+          <ScrollArea className="flex-1 min-h-[200px] max-h-[55vh] rounded-lg border">
+            {deliveriesLoading && deliveries.length === 0 ? (
+              <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading recipients…
+              </div>
+            ) : shownDeliveries.length === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">Nobody in this list.</p>
+            ) : (
+              shownDeliveries.map((d) => (
+                <div key={d.user_id} className="flex items-start justify-between gap-3 border-b px-3 py-2.5 last:border-b-0">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{d.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {d.telegram_username ? `@${d.telegram_username} · ` : ""}ID {d.telegram_id}
+                    </p>
+                    <p className="text-xs mt-0.5">{deliveryReason(d)}</p>
+                  </div>
+                  <Badge className={`shrink-0 ${STATUS_STYLE[d.status]?.className || ""}`}>
+                    {STATUS_STYLE[d.status]?.label || d.status}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </ScrollArea>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDetailsFor(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmOpen} onOpenChange={(open) => !sending && setConfirmOpen(open)}>
         <DialogContent>
