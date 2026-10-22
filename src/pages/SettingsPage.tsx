@@ -45,10 +45,8 @@ interface InvitationRules {
   free_years: number;
   invites_per_year: number;
   years_per_invite: number;
-  invites_to_unlock_all_years: number;
   free_courses_ratio: number;
-  invites_to_unlock_all_courses: number;
-  invites_to_unlock_all: number;
+  courses_per_invite: number;
   ai_bonus_per_invite: number;
   summary?: string;
   updated_at?: string | null;
@@ -56,8 +54,7 @@ interface InvitationRules {
 const defaultForm: SettingFormState = { key: "", value: "", description: "", is_public: false };
 const defaultRules: InvitationRules = {
   free_years: 1, invites_per_year: 1, years_per_invite: 1,
-  invites_to_unlock_all_years: 4, free_courses_ratio: 0.25,
-  invites_to_unlock_all_courses: 4, invites_to_unlock_all: 4, ai_bonus_per_invite: 0,
+  free_courses_ratio: 0.25, courses_per_invite: 1, ai_bonus_per_invite: 0,
 };
 
 // Live Preview
@@ -65,25 +62,17 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
   const [preview, setPreview] = useState(2);
   const totalYears = 5;
   const totalCourses = 8;
-  const isFullyUnlocked = preview >= rules.invites_to_unlock_all;
-  let unlockedYears: number;
-  if (isFullyUnlocked) {
-    unlockedYears = totalYears;
-  } else {
-    const extra = rules.years_per_invite > 1
-      ? preview * rules.years_per_invite
-      : Math.floor(preview / rules.invites_per_year);
-    unlockedYears = Math.min(totalYears, rules.free_years + extra);
-  }
-  let unlockedCourses: number;
-  const courseThreshold = Math.min(rules.invites_to_unlock_all, rules.invites_to_unlock_all_courses);
-  if (isFullyUnlocked || preview >= courseThreshold) {
-    unlockedCourses = totalCourses;
-  } else {
-    const base = Math.max(1, Math.floor(totalCourses * rules.free_courses_ratio));
-    const extra2 = courseThreshold > 0 ? Math.floor(preview * (totalCourses - base) / courseThreshold) : 0;
-    unlockedCourses = Math.min(totalCourses, base + extra2);
-  }
+  // Mirrors the backend: invites never unlock the newest year or the last course (PRO only)
+  const freeYears = Math.min(rules.free_years, totalYears);
+  const yearCap = Math.max(freeYears, totalYears - 1);
+  const extraYears = rules.years_per_invite > 1
+    ? preview * rules.years_per_invite
+    : Math.floor(preview / rules.invites_per_year);
+  const unlockedYears = Math.max(freeYears, Math.min(yearCap, freeYears + extraYears));
+  const baseCourses = Math.min(totalCourses, Math.max(1, Math.floor(totalCourses * rules.free_courses_ratio)));
+  const courseCap = Math.max(baseCourses, totalCourses - 1);
+  const unlockedCourses = Math.min(courseCap, baseCourses + preview * rules.courses_per_invite);
+  const maxedOut = unlockedYears >= yearCap && unlockedCourses >= courseCap;
   const aiLimit = 5 + preview * rules.ai_bonus_per_invite;
 
   return (
@@ -101,24 +90,20 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
             <Label className="text-sm font-medium">Student has invited</Label>
             <span className="text-2xl font-bold text-primary">{preview} friend{preview !== 1 ? "s" : ""}</span>
           </div>
-          <Slider min={0} max={Math.max(rules.invites_to_unlock_all + 2, 10)} step={1} value={[preview]}
+          <Slider min={0} max={10} step={1} value={[preview]}
             onValueChange={([v]) => setPreview(v)} className="w-full" />
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>0 invites</span>
-            <span>{Math.max(rules.invites_to_unlock_all + 2, 10)} invites</span>
+            <span>10 invites</span>
           </div>
         </div>
-        {isFullyUnlocked ? (
-          <div className="rounded-lg bg-green-500/10 border border-green-500/30 px-4 py-2 text-center">
-            <p className="text-green-600 font-bold text-sm">🎉 Full Access — All content unlocked!</p>
-          </div>
-        ) : (
-          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-2 text-center">
-            <p className="text-amber-600 font-semibold text-sm">
-              {rules.invites_to_unlock_all - preview} more invite{rules.invites_to_unlock_all - preview !== 1 ? "s" : ""} needed for full access
-            </p>
-          </div>
-        )}
+        <div className={`rounded-lg px-4 py-2 text-center border ${maxedOut ? "bg-green-500/10 border-green-500/30" : "bg-amber-500/10 border-amber-500/30"}`}>
+          <p className={`font-semibold text-sm ${maxedOut ? "text-green-600" : "text-amber-600"}`}>
+            {maxedOut
+              ? "Max reachable by invites. The newest year and full access still require PRO."
+              : "Full access is PRO only. Invites never unlock the newest year or every course."}
+          </p>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border bg-card p-3 text-center">
             <p className="text-xs text-muted-foreground mb-1">📅 Exam Years</p>
@@ -274,51 +259,6 @@ function SectionCard({ icon, title, description, children }: {
   );
 }
 
-function MasterUnlockStepper({ value, onSave }: { value: number; onSave: (v: number) => Promise<void> }) {
-  const [editing, setEditing] = useState(false);
-  const [local, setLocal] = useState(value);
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { if (!editing) setLocal(value); }, [value, editing]);
-  const handleSave = async () => {
-    setSaving(true);
-    try { await onSave(local); setEditing(false); } finally { setSaving(false); }
-  };
-  return editing ? (
-    <div className="flex flex-col items-center gap-2">
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg"
-          onClick={() => setLocal((v) => Math.max(0, v - 1))} disabled={local <= 0}>
-          <span className="text-base font-bold">-</span>
-        </Button>
-        <span className="text-3xl font-black text-primary w-12 text-center tabular-nums">{local}</span>
-        <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg"
-          onClick={() => setLocal((v) => v + 1)}>
-          <span className="text-base font-bold">+</span>
-        </Button>
-      </div>
-      <p className="text-xs text-center text-muted-foreground">total invites</p>
-      <div className="flex gap-1">
-        <Button size="sm" className="h-7 bg-green-600 hover:bg-green-700 text-white px-3"
-          onClick={handleSave} disabled={saving}>
-          <Check className="h-3.5 w-3.5 mr-1" /> {saving ? "Saving..." : "Save"}
-        </Button>
-        <Button variant="ghost" size="sm" className="h-7 px-2"
-          onClick={() => { setLocal(value); setEditing(false); }}>
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
-  ) : (
-    <div className="flex flex-col items-center gap-1">
-      <span className="text-4xl font-black text-primary tabular-nums">{value}</span>
-      <p className="text-xs text-muted-foreground">total invites</p>
-      <Button variant="outline" size="sm" className="h-7 px-3 mt-1" onClick={() => setEditing(true)}>
-        <Pencil className="h-3 w-3 mr-1" /> Edit
-      </Button>
-    </div>
-  );
-}
-
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSetting[]>([]);
   const [loadingSettings, setLoadingSettings] = useState(true);
@@ -428,9 +368,8 @@ export default function SettingsPage() {
                 { label: "Free Years", value: savedRules.free_years },
                 { label: "Invites / Year", value: savedRules.invites_per_year },
                 { label: "Free Courses", value: `${Math.round(savedRules.free_courses_ratio * 100)}%` },
-                { label: "Master Unlock", value: `${savedRules.invites_to_unlock_all} invites` },
-                { label: "Unlock All Years", value: `${savedRules.invites_to_unlock_all_years} invites` },
-                { label: "Unlock All Courses", value: `${savedRules.invites_to_unlock_all_courses} invites` },
+                { label: "Courses / Invite", value: savedRules.courses_per_invite },
+                { label: "Full Access", value: "PRO only" },
                 { label: "Years / Invite", value: savedRules.years_per_invite },
                 { label: "AI Bonus", value: savedRules.ai_bonus_per_invite === 0 ? "Off" : `+${savedRules.ai_bonus_per_invite}/invite` },
               ] as { label: string; value: string | number }[]).map((item) => (
@@ -517,61 +456,46 @@ export default function SettingsPage() {
               <div className="rounded-xl bg-blue-500/5 border border-blue-500/20 p-4 mt-2">
                 <p className="text-xs font-semibold text-blue-600 mb-2">Milestone preview with current settings:</p>
                 <div className="flex items-center gap-2 flex-wrap text-sm">
-                  {[0, 1, 2, 3, savedRules.invites_to_unlock_all]
-                    .filter((v, i, a) => a.indexOf(v) === i)
+                  {[0, 1, 2, 3, 5]
                     .map((invites, idx, arr) => {
                       const extra = savedRules.years_per_invite > 1
                         ? invites * savedRules.years_per_invite
                         : Math.floor(invites / savedRules.invites_per_year);
-                      const years = invites >= savedRules.invites_to_unlock_all ? "All" : `${savedRules.free_years + extra}`;
+                      const years = `${savedRules.free_years + extra}`;
                       return (
                         <React.Fragment key={invites}>
                           <div className="rounded-lg border bg-white dark:bg-card px-3 py-1.5 text-xs font-medium text-center">
                             <span className="text-muted-foreground">{invites} invite{invites !== 1 ? "s" : ""}</span>
                             <ChevronRight className="inline h-3 w-3 mx-1 text-muted-foreground" />
-                            <span className="font-bold text-foreground">{years} year{years !== "All" && Number(years) !== 1 ? "s" : ""}</span>
+                            <span className="font-bold text-foreground">{years} year{Number(years) !== 1 ? "s" : ""}</span>
                           </div>
                           {idx < arr.length - 1 && <span className="text-muted-foreground">to</span>}
                         </React.Fragment>
                       );
                     })}
                 </div>
+                <p className="text-xs text-muted-foreground mt-2">Capped per department: the newest exam year always stays PRO only.</p>
               </div>
             </SectionCard>
 
             <SectionCard
-              icon={<span className="text-lg">🔓</span>}
-              title="Full Unlock Thresholds"
-              description="Total invites needed to unlock specific content entirely."
+              icon={<span className="text-lg">📚</span>}
+              title="Courses Unlocked by Invites"
+              description="How practice courses open up beyond the free ones."
             >
               <RuleRow
-                label="Invites to Unlock ALL Years"
-                sublabel="Once a student reaches this count, every exam year opens automatically."
-                tooltip="This is a ceiling — even if the per-invite math says fewer, this caps it."
-                savedValue={savedRules.invites_to_unlock_all_years}
-                min={0}
-                onSave={(v) => saveOneRule("invites_to_unlock_all_years", v)}
-              />
-              <RuleRow
-                label="Invites to Unlock ALL Courses"
-                sublabel="Once reached, every course in every year becomes fully accessible."
-                savedValue={savedRules.invites_to_unlock_all_courses}
-                min={0}
-                onSave={(v) => saveOneRule("invites_to_unlock_all_courses", v)}
+                label="Courses Unlocked per Invite"
+                sublabel="E.g. '1' = every invite unlocks one more course. The last course always stays PRO only."
+                savedValue={savedRules.courses_per_invite}
+                min={1}
+                onSave={(v) => saveOneRule("courses_per_invite", v)}
               />
               <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4">
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-primary">⭐ Master Unlock Threshold</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      When a student hits this, <strong>everything</strong> (years + courses) unlocks instantly.
-                    </p>
-                  </div>
-                  <MasterUnlockStepper
-                    value={savedRules.invites_to_unlock_all}
-                    onSave={(v) => saveOneRule("invites_to_unlock_all", v)}
-                  />
-                </div>
+                <p className="text-sm font-bold text-primary">💎 Full access is PRO only</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Invites can never unlock <strong>everything</strong>. The newest exam year in each department and
+                  the last course always require a PRO payment.
+                </p>
               </div>
             </SectionCard>
 
@@ -587,7 +511,7 @@ export default function SettingsPage() {
                     sublabel={
                       savedRules.ai_bonus_per_invite === 0
                         ? "Currently disabled — all students get the same base AI limit (5/day)."
-                        : `A student with ${savedRules.invites_to_unlock_all} invites gets ${5 + savedRules.invites_to_unlock_all * savedRules.ai_bonus_per_invite} AI explanations/day.`
+                        : `A student with 5 invites gets ${5 + 5 * savedRules.ai_bonus_per_invite} AI explanations/day.`
                     }
                     tooltip="Set to 0 to disable. Base is 5 AI explanations/day for all students."
                     savedValue={savedRules.ai_bonus_per_invite}
@@ -602,9 +526,9 @@ export default function SettingsPage() {
                   {savedRules.ai_bonus_per_invite > 0 && (
                     <>
                       <Separator className="my-2" />
-                      <p className="text-xs text-muted-foreground">Max invites</p>
+                      <p className="text-xs text-muted-foreground">With 5 invites</p>
                       <p className="text-2xl font-black text-purple-500">
-                        {5 + savedRules.invites_to_unlock_all * savedRules.ai_bonus_per_invite}
+                        {5 + 5 * savedRules.ai_bonus_per_invite}
                       </p>
                     </>
                   )}
