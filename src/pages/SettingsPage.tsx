@@ -45,6 +45,7 @@ interface InvitationRules {
   free_years: number;
   invites_per_year: number;
   years_per_invite: number;
+  max_invite_years: number;
   free_courses_ratio: number;
   courses_per_invite: number;
   ai_bonus_per_invite: number;
@@ -53,7 +54,7 @@ interface InvitationRules {
 }
 const defaultForm: SettingFormState = { key: "", value: "", description: "", is_public: false };
 const defaultRules: InvitationRules = {
-  free_years: 1, invites_per_year: 1, years_per_invite: 1,
+  free_years: 1, invites_per_year: 2, years_per_invite: 1, max_invite_years: 1,
   free_courses_ratio: 0.25, courses_per_invite: 1, ai_bonus_per_invite: 0,
 };
 
@@ -64,7 +65,7 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
   const totalCourses = 8;
   // Mirrors the backend: invites never unlock the newest year or the last course (PRO only)
   const freeYears = Math.min(rules.free_years, totalYears);
-  const yearCap = Math.max(freeYears, totalYears - 1);
+  const yearCap = Math.max(freeYears, Math.min(totalYears - 1, freeYears + rules.max_invite_years));
   const extraYears = rules.years_per_invite > 1
     ? preview * rules.years_per_invite
     : Math.floor(preview / rules.invites_per_year);
@@ -371,6 +372,7 @@ export default function SettingsPage() {
                 { label: "Courses / Invite", value: savedRules.courses_per_invite },
                 { label: "Full Access", value: "PRO only" },
                 { label: "Years / Invite", value: savedRules.years_per_invite },
+                { label: "Max Years by Invites", value: savedRules.max_invite_years },
                 { label: "AI Bonus", value: savedRules.ai_bonus_per_invite === 0 ? "Off" : `+${savedRules.ai_bonus_per_invite}/invite` },
               ] as { label: string; value: string | number }[]).map((item) => (
                 <div key={item.label} className="rounded-lg border bg-background p-3">
@@ -395,6 +397,13 @@ export default function SettingsPage() {
             <h2 className="text-xl font-bold">Referral &amp; Invitation Rules</h2>
             <p className="text-muted-foreground text-sm mt-0.5">
               Click the pencil on any rule to edit it. Each change saves immediately.
+            </p>
+            <p className="text-sm mt-2 rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-blue-700 dark:text-blue-300">
+              ℹ️ Saving a rule does <strong>not</strong> send any message to users. The bot simply uses the new rules
+              (within about 5 minutes) the next time a student opens exams, courses or 🤝 Invite Friends.
+            </p>
+            <p className="text-sm mt-2 text-muted-foreground">
+              A friend counts as an invite only after they start the bot <strong>and choose their department</strong>.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={fetchRules} disabled={rulesLoading}>
@@ -453,6 +462,14 @@ export default function SettingsPage() {
                 min={1}
                 onSave={(v) => saveOneRule("years_per_invite", v)}
               />
+              <RuleRow
+                label="Max Extra Years by Invites"
+                sublabel="The most exam years invites can ever open beyond the free ones. Every other year requires PRO."
+                tooltip="E.g. '1' with 2 invites per year = 2 invites open one extra year, and the rest need payment."
+                savedValue={savedRules.max_invite_years}
+                min={0}
+                onSave={(v) => saveOneRule("max_invite_years", v)}
+              />
               <div className="rounded-xl bg-blue-500/5 border border-blue-500/20 p-4 mt-2">
                 <p className="text-xs font-semibold text-blue-600 mb-2">Milestone preview with current settings:</p>
                 <div className="flex items-center gap-2 flex-wrap text-sm">
@@ -461,7 +478,7 @@ export default function SettingsPage() {
                       const extra = savedRules.years_per_invite > 1
                         ? invites * savedRules.years_per_invite
                         : Math.floor(invites / savedRules.invites_per_year);
-                      const years = `${savedRules.free_years + extra}`;
+                      const years = `${savedRules.free_years + Math.min(extra, savedRules.max_invite_years)}`;
                       return (
                         <React.Fragment key={invites}>
                           <div className="rounded-lg border bg-white dark:bg-card px-3 py-1.5 text-xs font-medium text-center">
@@ -474,7 +491,7 @@ export default function SettingsPage() {
                       );
                     })}
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Capped per department: the newest exam year always stays PRO only.</p>
+                <p className="text-xs text-muted-foreground mt-2">Invites open at most {savedRules.max_invite_years} extra year{savedRules.max_invite_years !== 1 ? "s" : ""}, and never the newest year. Every other year requires PRO.</p>
               </div>
             </SectionCard>
 
