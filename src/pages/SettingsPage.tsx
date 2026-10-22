@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Settings, Plus, Pencil, Trash2, RefreshCw,
-  Globe, Lock, Save, Users, BookOpen, Zap, Gift,
-  ChevronRight, Info,
+  Globe, Lock, Save, Users, Zap, Gift,
+  ChevronRight, Info, Check, X, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,6 @@ import { getToken } from "@/lib/auth";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-// ── Types ──────────────────────────────────────────────────────────────────────
 interface AppSetting {
   key: string;
   value: string | null;
@@ -61,15 +60,12 @@ const defaultRules: InvitationRules = {
   invites_to_unlock_all_courses: 4, invites_to_unlock_all: 4, ai_bonus_per_invite: 0,
 };
 
-// ── Live Preview ───────────────────────────────────────────────────────────────
+// Live Preview
 function LivePreview({ rules }: { rules: InvitationRules }) {
   const [preview, setPreview] = useState(2);
-  const totalYears = 5; // example
-  const totalCourses = 8; // example
-
+  const totalYears = 5;
+  const totalCourses = 8;
   const isFullyUnlocked = preview >= rules.invites_to_unlock_all;
-
-  // Unlocked years
   let unlockedYears: number;
   if (isFullyUnlocked) {
     unlockedYears = totalYears;
@@ -79,8 +75,6 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
       : Math.floor(preview / rules.invites_per_year);
     unlockedYears = Math.min(totalYears, rules.free_years + extra);
   }
-
-  // Unlocked courses
   let unlockedCourses: number;
   const courseThreshold = Math.min(rules.invites_to_unlock_all, rules.invites_to_unlock_all_courses);
   if (isFullyUnlocked || preview >= courseThreshold) {
@@ -90,7 +84,6 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
     const extra2 = courseThreshold > 0 ? Math.floor(preview * (totalCourses - base) / courseThreshold) : 0;
     unlockedCourses = Math.min(totalCourses, base + extra2);
   }
-
   const aiLimit = 5 + preview * rules.ai_bonus_per_invite;
 
   return (
@@ -98,46 +91,34 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <Zap className="h-4 w-4 text-primary" />
-          Live Preview — See How It Works
+          Live Preview — What does a student get?
         </CardTitle>
-        <CardDescription>
-          Drag the slider to see what a user with that many invites can access.
-        </CardDescription>
+        <CardDescription>Drag the slider to simulate a student who has invited that many friends.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Invite slider */}
         <div className="space-y-2">
           <div className="flex justify-between items-center">
-            <Label className="text-sm font-medium">User has invited</Label>
-            <span className="text-2xl font-bold text-primary">{preview}</span>
+            <Label className="text-sm font-medium">Student has invited</Label>
+            <span className="text-2xl font-bold text-primary">{preview} friend{preview !== 1 ? "s" : ""}</span>
           </div>
-          <Slider
-            min={0} max={Math.max(rules.invites_to_unlock_all + 2, 10)}
-            step={1} value={[preview]}
-            onValueChange={([v]) => setPreview(v)}
-            className="w-full"
-          />
+          <Slider min={0} max={Math.max(rules.invites_to_unlock_all + 2, 10)} step={1} value={[preview]}
+            onValueChange={([v]) => setPreview(v)} className="w-full" />
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>0 invites</span>
             <span>{Math.max(rules.invites_to_unlock_all + 2, 10)} invites</span>
           </div>
         </div>
-
-        {/* Status badge */}
         {isFullyUnlocked ? (
           <div className="rounded-lg bg-green-500/10 border border-green-500/30 px-4 py-2 text-center">
-            <p className="text-green-600 font-bold text-sm">🎉 Full Access Unlocked!</p>
-            <p className="text-xs text-muted-foreground">This user can access everything.</p>
+            <p className="text-green-600 font-bold text-sm">🎉 Full Access — All content unlocked!</p>
           </div>
         ) : (
           <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-2 text-center">
             <p className="text-amber-600 font-semibold text-sm">
-              Needs {rules.invites_to_unlock_all - preview} more invite{rules.invites_to_unlock_all - preview !== 1 ? "s" : ""} for full access
+              {rules.invites_to_unlock_all - preview} more invite{rules.invites_to_unlock_all - preview !== 1 ? "s" : ""} needed for full access
             </p>
           </div>
         )}
-
-        {/* Access grid */}
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border bg-card p-3 text-center">
             <p className="text-xs text-muted-foreground mb-1">📅 Exam Years</p>
@@ -163,7 +144,6 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
             <p className="text-xs text-muted-foreground">questions/day</p>
           </div>
         </div>
-
         <p className="text-xs text-muted-foreground text-center italic">
           * Preview uses example data (5 years, 8 courses). Real numbers depend on each department.
         </p>
@@ -172,42 +152,52 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
   );
 }
 
-// ── Setting Card helper ────────────────────────────────────────────────────────
-function SettingBlock({
-  icon, title, description, children,
-}: {
-  icon: React.ReactNode; title: string; description: string; children: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader className="pb-4">
-        <CardTitle className="text-base flex items-center gap-2">
-          {icon} {title}
-        </CardTitle>
-        <CardDescription className="text-sm">{description}</CardDescription>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
+// Individual editable rule row
+type RuleRowProps = {
+  label: string;
+  sublabel: string;
+  tooltip?: string;
+  savedValue: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  format?: (v: number) => string;
+  onSave: (v: number) => Promise<void>;
+};
+
+function RuleRow({
+  label, sublabel, tooltip, savedValue, min = 0, max, step = 1, format, onSave,
+}: RuleRowProps) {
+  const isRatio = step >= 0.05 && step < 0.5;
+  const defaultFmt = isRatio ? (v: number) => `${Math.round(v * 100)}%` : (v: number) => String(v);
+  const fmt = format ?? defaultFmt;
+  const [editing, setEditing] = useState(false);
+  const [localVal, setLocalVal] = useState(savedValue);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setLocalVal(savedValue);
+  }, [savedValue, editing]);
+
+  const dec = () => setLocalVal((v) => Math.max(min, parseFloat((v - step).toFixed(4))));
+  const inc = () => setLocalVal((v) =>
+    max !== undefined ? Math.min(max, parseFloat((v + step).toFixed(4))) : parseFloat((v + step).toFixed(4))
   );
-}
 
-// ── Number stepper ─────────────────────────────────────────────────────────────
-function NumberStepper({
-  label, sublabel, tooltip, value, min = 0, max, step = 1, onChange,
-}: {
-  label: string; sublabel?: string; tooltip?: string;
-  value: number; min?: number; max?: number; step?: number;
-  onChange: (v: number) => void;
-}) {
-  const dec = () => onChange(Math.max(min, value - step));
-  const inc = () => onChange(max !== undefined ? Math.min(max, value + step) : value + step);
+  const handleSave = async () => {
+    setSaving(true);
+    try { await onSave(localVal); setEditing(false); } finally { setSaving(false); }
+  };
+  const handleCancel = () => { setLocalVal(savedValue); setEditing(false); };
 
   return (
-    <div className="rounded-xl border bg-muted/30 p-4 flex flex-col gap-2">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1">
-          <div className="flex items-center gap-1">
-            <p className="text-sm font-semibold text-foreground">{label}</p>
+    <div className={`rounded-xl border transition-all duration-200 ${
+      editing ? "border-primary/60 bg-primary/5 shadow-sm" : "bg-muted/20 hover:bg-muted/40"
+    }`}>
+      <div className="flex items-start gap-3 p-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm font-semibold">{label}</span>
             {tooltip && (
               <TooltipProvider>
                 <Tooltip>
@@ -219,98 +209,177 @@ function NumberStepper({
               </TooltipProvider>
             )}
           </div>
-          {sublabel && <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{sublabel}</p>}
+          <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{sublabel}</p>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <Button variant="outline" size="icon" className="h-7 w-7 rounded-lg" onClick={dec} disabled={value <= min}>
-            <span className="text-base font-bold">−</span>
-          </Button>
-          <span className="text-xl font-bold w-10 text-center tabular-nums">{step < 1 ? value.toFixed(2) : value}</span>
-          <Button variant="outline" size="icon" className="h-7 w-7 rounded-lg" onClick={inc} disabled={max !== undefined && value >= max}>
-            <span className="text-base font-bold">+</span>
-          </Button>
-        </div>
+        {!editing ? (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="text-right">
+              <span className="text-2xl font-black tabular-nums text-primary">{fmt(savedValue)}</span>
+              <p className="text-xs text-muted-foreground">current</p>
+            </div>
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg"
+              onClick={() => setEditing(true)} title="Edit">
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {isRatio ? (
+              <div className="flex flex-col items-end gap-1 w-36">
+                <span className="text-2xl font-black tabular-nums text-primary">{fmt(localVal)}</span>
+                <Slider min={min} max={max ?? 1} step={step} value={[localVal]}
+                  onValueChange={([v]) => setLocalVal(v)} className="w-full" />
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-7 w-7 rounded-lg"
+                  onClick={dec} disabled={localVal <= min}>
+                  <span className="text-base font-bold">-</span>
+                </Button>
+                <span className="text-xl font-bold w-12 text-center tabular-nums">{fmt(localVal)}</span>
+                <Button variant="outline" size="icon" className="h-7 w-7 rounded-lg"
+                  onClick={inc} disabled={max !== undefined && localVal >= max}>
+                  <span className="text-base font-bold">+</span>
+                </Button>
+              </div>
+            )}
+            <div className="flex gap-1 ml-1">
+              <Button size="icon" className="h-7 w-7 rounded-lg bg-green-600 hover:bg-green-700"
+                onClick={handleSave} disabled={saving} title="Save">
+                <Check className="h-3.5 w-3.5 text-white" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg"
+                onClick={handleCancel} title="Cancel">
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Main Page ──────────────────────────────────────────────────────────────────
+function SectionCard({ icon, title, description, children }: {
+  icon: React.ReactNode; title: string; description: string; children: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-3 border-b">
+        <CardTitle className="text-base flex items-center gap-2">{icon} {title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-2.5">{children}</CardContent>
+    </Card>
+  );
+}
+
+function MasterUnlockStepper({ value, onSave }: { value: number; onSave: (v: number) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState(value);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (!editing) setLocal(value); }, [value, editing]);
+  const handleSave = async () => {
+    setSaving(true);
+    try { await onSave(local); setEditing(false); } finally { setSaving(false); }
+  };
+  return editing ? (
+    <div className="flex flex-col items-center gap-2">
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg"
+          onClick={() => setLocal((v) => Math.max(0, v - 1))} disabled={local <= 0}>
+          <span className="text-base font-bold">-</span>
+        </Button>
+        <span className="text-3xl font-black text-primary w-12 text-center tabular-nums">{local}</span>
+        <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg"
+          onClick={() => setLocal((v) => v + 1)}>
+          <span className="text-base font-bold">+</span>
+        </Button>
+      </div>
+      <p className="text-xs text-center text-muted-foreground">total invites</p>
+      <div className="flex gap-1">
+        <Button size="sm" className="h-7 bg-green-600 hover:bg-green-700 text-white px-3"
+          onClick={handleSave} disabled={saving}>
+          <Check className="h-3.5 w-3.5 mr-1" /> {saving ? "Saving..." : "Save"}
+        </Button>
+        <Button variant="ghost" size="sm" className="h-7 px-2"
+          onClick={() => { setLocal(value); setEditing(false); }}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <div className="flex flex-col items-center gap-1">
+      <span className="text-4xl font-black text-primary tabular-nums">{value}</span>
+      <p className="text-xs text-muted-foreground">total invites</p>
+      <Button variant="outline" size="sm" className="h-7 px-3 mt-1" onClick={() => setEditing(true)}>
+        <Pencil className="h-3 w-3 mr-1" /> Edit
+      </Button>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
-  // Generic settings
   const [settings, setSettings] = useState<AppSetting[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingSettings, setLoadingSettings] = useState(true);
   const [openAdd, setOpenAdd] = useState(false);
   const [editingSetting, setEditingSetting] = useState<AppSetting | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [form, setForm] = useState<SettingFormState>(defaultForm);
-  const [saving, setSaving] = useState(false);
-
-  // Invitation rules
-  const [rules, setRules] = useState<InvitationRules>(defaultRules);
+  const [formSaving, setFormSaving] = useState(false);
+  const [savedRules, setSavedRules] = useState<InvitationRules>(defaultRules);
   const [rulesLoading, setRulesLoading] = useState(true);
-  const [rulesSaving, setRulesSaving] = useState(false);
-  const [isDirty, setIsDirty] = useState(false);
 
   const token = getToken();
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
 
-  const fetchRules = async () => {
+  const fetchRules = useCallback(async () => {
     setRulesLoading(true);
     try {
       const res = await axios.get(`${API_BASE}/admin/settings/invitation`, authHeaders);
-      setRules(res.data);
-      setIsDirty(false);
+      setSavedRules(res.data);
     } catch {
       toast.error("Failed to load referral rules");
     } finally {
       setRulesLoading(false);
     }
-  };
+  }, []);
 
-  const fetchSettings = async () => {
-    setLoading(true);
+  const fetchSettings = useCallback(async () => {
+    setLoadingSettings(true);
     try {
       const res = await axios.get(`${API_BASE}/admin/settings`, authHeaders);
       setSettings(res.data);
     } catch {
       toast.error("Failed to load settings");
     } finally {
-      setLoading(false);
+      setLoadingSettings(false);
     }
-  };
+  }, []);
 
   useEffect(() => { fetchRules(); fetchSettings(); }, []);
 
-  const handleSaveRules = async () => {
-    setRulesSaving(true);
+  const saveOneRule = useCallback(async <K extends keyof InvitationRules>(key: K, val: InvitationRules[K]) => {
+    const updated = { ...savedRules, [key]: val };
+    const { summary, updated_at, ...payload } = updated;
     try {
-      const { summary, updated_at, ...payload } = rules;
       const res = await axios.put(`${API_BASE}/admin/settings/invitation`, payload, authHeaders);
-      setRules(res.data);
-      setIsDirty(false);
-      toast.success("✅ Referral rules saved! Changes are now live.");
+      setSavedRules(res.data);
+      toast.success("Saved!");
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save referral rules");
-    } finally {
-      setRulesSaving(false);
+      toast.error(err?.response?.data?.detail || "Failed to save");
+      throw err;
     }
-  };
+  }, [savedRules]);
 
-  const updateRule = <K extends keyof InvitationRules>(key: K, val: InvitationRules[K]) => {
-    setRules((r) => ({ ...r, [key]: val }));
-    setIsDirty(true);
-  };
-
-  // Generic settings
   const openAddDialog = () => { setForm(defaultForm); setOpenAdd(true); };
   const openEditDialog = (s: AppSetting) => {
     setEditingSetting(s);
     setForm({ key: s.key, value: s.value ?? "", description: s.description ?? "", is_public: s.is_public });
   };
-  const handleSave = async () => {
+  const handleSaveSetting = async () => {
     if (!form.key.trim()) { toast.error("Key is required"); return; }
-    setSaving(true);
+    setFormSaving(true);
     try {
       await axios.put(
         `${API_BASE}/admin/settings/${encodeURIComponent(form.key)}`,
@@ -321,9 +390,9 @@ export default function SettingsPage() {
       setOpenAdd(false); setEditingSetting(null); fetchSettings();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to save setting");
-    } finally { setSaving(false); }
+    } finally { setFormSaving(false); }
   };
-  const handleDelete = async () => {
+  const handleDeleteSetting = async () => {
     if (!deletingKey) return;
     try {
       await axios.delete(`${API_BASE}/admin/settings/${encodeURIComponent(deletingKey)}`, authHeaders);
@@ -336,246 +405,232 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 p-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <Settings className="h-6 w-6" /> Configuration Settings
+        </h1>
+        <p className="text-muted-foreground text-sm mt-1">
+          Manage referral rules and app settings. Click the pencil icon on any rule to edit it individually.
+        </p>
+      </div>
 
-      {/* ══════════ SECTION 1: REFERRAL RULES ══════════ */}
+      {/* Current config snapshot */}
+      {!rulesLoading && (
+        <Card className="border-dashed bg-muted/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+              <Eye className="h-4 w-4" /> Current Live Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {([
+                { label: "Free Years", value: savedRules.free_years },
+                { label: "Invites / Year", value: savedRules.invites_per_year },
+                { label: "Free Courses", value: `${Math.round(savedRules.free_courses_ratio * 100)}%` },
+                { label: "Master Unlock", value: `${savedRules.invites_to_unlock_all} invites` },
+                { label: "Unlock All Years", value: `${savedRules.invites_to_unlock_all_years} invites` },
+                { label: "Unlock All Courses", value: `${savedRules.invites_to_unlock_all_courses} invites` },
+                { label: "Years / Invite", value: savedRules.years_per_invite },
+                { label: "AI Bonus", value: savedRules.ai_bonus_per_invite === 0 ? "Off" : `+${savedRules.ai_bonus_per_invite}/invite` },
+              ] as { label: string; value: string | number }[]).map((item) => (
+                <div key={item.label} className="rounded-lg border bg-background p-3">
+                  <p className="text-xs text-muted-foreground">{item.label}</p>
+                  <p className="text-lg font-bold mt-0.5 tabular-nums">{item.value}</p>
+                </div>
+              ))}
+            </div>
+            {savedRules.updated_at && (
+              <p className="text-xs text-muted-foreground mt-3">
+                Last updated: {new Date(savedRules.updated_at).toLocaleString()}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Referral Rules */}
       <section>
-        {/* Header */}
-        <div className="flex items-start justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">🔗 Referral &amp; Invitation Settings</h1>
-            <p className="text-muted-foreground text-sm mt-1 max-w-xl">
-              Control what users can unlock by inviting friends. These rules apply to all students automatically.
+            <h2 className="text-xl font-bold">Referral &amp; Invitation Rules</h2>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              Click the pencil on any rule to edit it. Each change saves immediately.
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {isDirty && (
-              <Badge variant="outline" className="text-amber-600 border-amber-400 bg-amber-50 animate-pulse">
-                Unsaved changes
-              </Badge>
-            )}
-            <Button variant="outline" size="sm" onClick={fetchRules} disabled={rulesLoading}>
-              <RefreshCw className={`h-4 w-4 mr-1 ${rulesLoading ? "animate-spin" : ""}`} />
-              Reset
-            </Button>
-            <Button size="sm" onClick={handleSaveRules} disabled={rulesSaving || rulesLoading}
-              className={isDirty ? "bg-primary shadow-md shadow-primary/30" : ""}>
-              <Save className="h-4 w-4 mr-1" />
-              {rulesSaving ? "Saving…" : "Save Changes"}
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={fetchRules} disabled={rulesLoading}>
+            <RefreshCw className={`h-4 w-4 mr-1 ${rulesLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
         </div>
 
         {rulesLoading ? (
-          <div className="grid gap-4">
-            {[1, 2, 3].map(i => <div key={i} className="h-32 rounded-xl bg-muted animate-pulse" />)}
+          <div className="grid gap-3">
+            {[1,2,3,4,5,6].map((i) => <div key={i} className="h-20 rounded-xl bg-muted animate-pulse" />)}
           </div>
         ) : (
-          <div className="space-y-5">
-
-            {/* ── BLOCK 1: Free Access ── */}
-            <SettingBlock
+          <div className="space-y-4">
+            <SectionCard
               icon={<span className="text-lg">🎁</span>}
               title="Free Access (No Invites Needed)"
-              description="What every student gets for free, before they invite anyone."
+              description="What every student gets for free before they invite anyone."
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <NumberStepper
-                  label="Free Exam Years"
-                  sublabel="How many of the oldest exam years students can access without any invites."
-                  tooltip="Set to 1 to give the oldest year for free. Set to 0 to lock all years behind invites."
-                  value={rules.free_years} min={0}
-                  onChange={(v) => updateRule("free_years", v)}
-                />
-                <div className="rounded-xl border bg-muted/30 p-4">
-                  <p className="text-sm font-semibold mb-1">Free Courses</p>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    What percentage of courses in each year is free by default.
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <Slider
-                      min={0} max={1} step={0.05}
-                      value={[rules.free_courses_ratio]}
-                      onValueChange={([v]) => updateRule("free_courses_ratio", v)}
-                      className="flex-1"
-                    />
-                    <span className="text-2xl font-bold w-16 text-right tabular-nums text-primary">
-                      {Math.round(rules.free_courses_ratio * 100)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Drag to set the free course percentage (0% = all locked, 100% = all free)
-                  </p>
-                </div>
-              </div>
-            </SettingBlock>
+              <RuleRow
+                label="Free Exam Years"
+                sublabel="How many of the oldest exam years students can access with zero invites."
+                tooltip="Set to 1 to give the oldest year free. Set to 0 to lock all years behind invites."
+                savedValue={savedRules.free_years}
+                min={0}
+                onSave={(v) => saveOneRule("free_years", v)}
+              />
+              <RuleRow
+                label="Free Courses Ratio"
+                sublabel="What percentage of courses within each year are free by default."
+                tooltip="0% = all courses locked, 100% = all free. 25% is a good starting point."
+                savedValue={savedRules.free_courses_ratio}
+                min={0} max={1} step={0.05}
+                onSave={(v) => saveOneRule("free_courses_ratio", v)}
+              />
+            </SectionCard>
 
-            {/* ── BLOCK 2: Invite Rewards ── */}
-            <SettingBlock
+            <SectionCard
               icon={<Users className="h-5 w-5 text-blue-500" />}
               title="What Each Invite Unlocks"
-              description="How many exam years a student unlocks each time they bring in a new friend."
+              description="How exam years get unlocked as students invite more friends."
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <NumberStepper
-                  label="Invites needed per extra year"
-                  sublabel="E.g. set to 1 = every invite unlocks 1 more year. Set to 2 = need 2 invites per year."
-                  tooltip="Lower = more generous. Higher = students need to invite more people per year unlocked."
-                  value={rules.invites_per_year} min={1}
-                  onChange={(v) => updateRule("invites_per_year", v)}
-                />
-                <NumberStepper
-                  label="Years unlocked per invite"
-                  sublabel="E.g. set to 2 = each invite unlocks 2 exam years at once. Usually keep at 1."
-                  tooltip="Use this if you want to be extra generous — 1 invite opens multiple years."
-                  value={rules.years_per_invite} min={1}
-                  onChange={(v) => updateRule("years_per_invite", v)}
-                />
-              </div>
-
-              {/* Visual example */}
-              <div className="mt-4 rounded-xl bg-blue-500/5 border border-blue-500/20 p-4">
-                <p className="text-xs font-semibold text-blue-600 mb-2">📖 Example with your current settings:</p>
+              <RuleRow
+                label="Invites Needed per Extra Year"
+                sublabel="E.g. '1' = every invite unlocks one more year. '2' = 2 invites needed per year."
+                tooltip="Lower = more generous. A value of 1 is recommended."
+                savedValue={savedRules.invites_per_year}
+                min={1}
+                onSave={(v) => saveOneRule("invites_per_year", v)}
+              />
+              <RuleRow
+                label="Years Unlocked per Invite"
+                sublabel="E.g. '2' = one invite opens 2 years at once. Usually keep at 1."
+                tooltip="Works opposite to 'invites per year'. Use one or the other, not both."
+                savedValue={savedRules.years_per_invite}
+                min={1}
+                onSave={(v) => saveOneRule("years_per_invite", v)}
+              />
+              <div className="rounded-xl bg-blue-500/5 border border-blue-500/20 p-4 mt-2">
+                <p className="text-xs font-semibold text-blue-600 mb-2">Milestone preview with current settings:</p>
                 <div className="flex items-center gap-2 flex-wrap text-sm">
-                  {[0, 1, 2, 3, rules.invites_to_unlock_all].filter((v, i, a) => a.indexOf(v) === i).map((invites, idx, arr) => {
-                    const extra = rules.years_per_invite > 1
-                      ? invites * rules.years_per_invite
-                      : Math.floor(invites / rules.invites_per_year);
-                    const years = invites >= rules.invites_to_unlock_all ? "All" : `${rules.free_years + extra}`;
-                    return (
-                      <React.Fragment key={invites}>
-                        <div className="text-center">
-                          <div className="rounded-lg border bg-white dark:bg-card px-3 py-1.5 text-xs font-medium">
+                  {[0, 1, 2, 3, savedRules.invites_to_unlock_all]
+                    .filter((v, i, a) => a.indexOf(v) === i)
+                    .map((invites, idx, arr) => {
+                      const extra = savedRules.years_per_invite > 1
+                        ? invites * savedRules.years_per_invite
+                        : Math.floor(invites / savedRules.invites_per_year);
+                      const years = invites >= savedRules.invites_to_unlock_all ? "All" : `${savedRules.free_years + extra}`;
+                      return (
+                        <React.Fragment key={invites}>
+                          <div className="rounded-lg border bg-white dark:bg-card px-3 py-1.5 text-xs font-medium text-center">
                             <span className="text-muted-foreground">{invites} invite{invites !== 1 ? "s" : ""}</span>
                             <ChevronRight className="inline h-3 w-3 mx-1 text-muted-foreground" />
                             <span className="font-bold text-foreground">{years} year{years !== "All" && Number(years) !== 1 ? "s" : ""}</span>
                           </div>
-                        </div>
-                        {idx < arr.length - 1 && <span className="text-muted-foreground text-lg">→</span>}
-                      </React.Fragment>
-                    );
-                  })}
+                          {idx < arr.length - 1 && <span className="text-muted-foreground">to</span>}
+                        </React.Fragment>
+                      );
+                    })}
                 </div>
               </div>
-            </SettingBlock>
+            </SectionCard>
 
-            {/* ── BLOCK 3: Full Unlock ── */}
-            <SettingBlock
+            <SectionCard
               icon={<span className="text-lg">🔓</span>}
               title="Full Unlock Thresholds"
-              description="How many total invites a student needs to unlock absolutely everything."
+              description="Total invites needed to unlock specific content entirely."
             >
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <NumberStepper
-                  label="Invites to unlock all years"
-                  sublabel="Once a student reaches this number, all exam years open up."
-                  tooltip="This is the maximum — even if the per-invite calculation says fewer, this is the cap."
-                  value={rules.invites_to_unlock_all_years} min={0}
-                  onChange={(v) => updateRule("invites_to_unlock_all_years", v)}
-                />
-                <NumberStepper
-                  label="Invites to unlock all courses"
-                  sublabel="Once reached, all courses within every year are fully accessible."
-                  value={rules.invites_to_unlock_all_courses} min={0}
-                  onChange={(v) => updateRule("invites_to_unlock_all_courses", v)}
-                />
-                <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 flex flex-col justify-between">
-                  <div>
-                    <p className="text-sm font-bold text-primary flex items-center gap-1">
-                      ⭐ Master Unlock Threshold
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1 leading-tight">
-                      When a student reaches this number, <strong>everything</strong> (years + courses) unlocks instantly.
+              <RuleRow
+                label="Invites to Unlock ALL Years"
+                sublabel="Once a student reaches this count, every exam year opens automatically."
+                tooltip="This is a ceiling — even if the per-invite math says fewer, this caps it."
+                savedValue={savedRules.invites_to_unlock_all_years}
+                min={0}
+                onSave={(v) => saveOneRule("invites_to_unlock_all_years", v)}
+              />
+              <RuleRow
+                label="Invites to Unlock ALL Courses"
+                sublabel="Once reached, every course in every year becomes fully accessible."
+                savedValue={savedRules.invites_to_unlock_all_courses}
+                min={0}
+                onSave={(v) => saveOneRule("invites_to_unlock_all_courses", v)}
+              />
+              <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-primary">⭐ Master Unlock Threshold</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      When a student hits this, <strong>everything</strong> (years + courses) unlocks instantly.
                     </p>
                   </div>
-                  <div className="flex items-center justify-between mt-3">
-                    <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg"
-                      onClick={() => updateRule("invites_to_unlock_all", Math.max(0, rules.invites_to_unlock_all - 1))}
-                      disabled={rules.invites_to_unlock_all <= 0}>
-                      <span className="text-base font-bold">−</span>
-                    </Button>
-                    <span className="text-3xl font-black text-primary tabular-nums">{rules.invites_to_unlock_all}</span>
-                    <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg"
-                      onClick={() => updateRule("invites_to_unlock_all", rules.invites_to_unlock_all + 1)}>
-                      <span className="text-base font-bold">+</span>
-                    </Button>
-                  </div>
-                  <p className="text-xs text-center text-muted-foreground mt-1">total invites</p>
-                </div>
-              </div>
-            </SettingBlock>
-
-            {/* ── BLOCK 4: AI Bonus ── */}
-            <SettingBlock
-              icon={<Gift className="h-5 w-5 text-purple-500" />}
-              title="AI Explanation Bonus (Optional)"
-              description="Reward students with extra daily AI question explanations for each friend they invite."
-            >
-              <div className="flex items-start gap-6">
-                <div className="flex-1">
-                  <NumberStepper
-                    label="Bonus AI explanations per invite"
-                    sublabel={
-                      rules.ai_bonus_per_invite === 0
-                        ? "Currently disabled — all users get the same base AI limit (5/day)."
-                        : `A student with ${rules.invites_to_unlock_all} invites gets ${5 + rules.invites_to_unlock_all * rules.ai_bonus_per_invite} AI explanations/day.`
-                    }
-                    tooltip="Set to 0 to disable the bonus. The base daily limit for all users is 5 AI explanations/day."
-                    value={rules.ai_bonus_per_invite} min={0}
-                    onChange={(v) => updateRule("ai_bonus_per_invite", v)}
+                  <MasterUnlockStepper
+                    value={savedRules.invites_to_unlock_all}
+                    onSave={(v) => saveOneRule("invites_to_unlock_all", v)}
                   />
                 </div>
-                <div className="rounded-xl border bg-muted/30 p-4 text-center min-w-[120px]">
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              icon={<Gift className="h-5 w-5 text-purple-500" />}
+              title="AI Explanation Bonus"
+              description="Optionally reward students with extra daily AI explanations per invite."
+            >
+              <div className="flex items-start gap-4">
+                <div className="flex-1">
+                  <RuleRow
+                    label="Bonus AI Explanations per Invite"
+                    sublabel={
+                      savedRules.ai_bonus_per_invite === 0
+                        ? "Currently disabled — all students get the same base AI limit (5/day)."
+                        : `A student with ${savedRules.invites_to_unlock_all} invites gets ${5 + savedRules.invites_to_unlock_all * savedRules.ai_bonus_per_invite} AI explanations/day.`
+                    }
+                    tooltip="Set to 0 to disable. Base is 5 AI explanations/day for all students."
+                    savedValue={savedRules.ai_bonus_per_invite}
+                    min={0}
+                    onSave={(v) => saveOneRule("ai_bonus_per_invite", v)}
+                  />
+                </div>
+                <div className="rounded-xl border bg-muted/30 p-4 text-center min-w-[110px]">
                   <p className="text-xs text-muted-foreground">Base limit</p>
                   <p className="text-3xl font-black">5</p>
                   <p className="text-xs text-muted-foreground">questions/day</p>
-                  {rules.ai_bonus_per_invite > 0 && (
+                  {savedRules.ai_bonus_per_invite > 0 && (
                     <>
                       <Separator className="my-2" />
-                      <p className="text-xs text-muted-foreground">With max invites</p>
+                      <p className="text-xs text-muted-foreground">Max invites</p>
                       <p className="text-2xl font-black text-purple-500">
-                        {5 + rules.invites_to_unlock_all * rules.ai_bonus_per_invite}
+                        {5 + savedRules.invites_to_unlock_all * savedRules.ai_bonus_per_invite}
                       </p>
                     </>
                   )}
                 </div>
               </div>
-            </SettingBlock>
+            </SectionCard>
 
-            {/* ── LIVE PREVIEW ── */}
-            <LivePreview rules={rules} />
-
-            {/* ── Save bar ── */}
-            {isDirty && (
-              <div className="sticky bottom-4 flex items-center justify-between gap-4 rounded-xl border bg-background/95 backdrop-blur shadow-lg px-5 py-3 z-10">
-                <p className="text-sm font-medium">You have unsaved changes to the referral rules.</p>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={fetchRules}>Discard</Button>
-                  <Button size="sm" onClick={handleSaveRules} disabled={rulesSaving}
-                    className="bg-primary shadow-md shadow-primary/30">
-                    <Save className="h-4 w-4 mr-1" />
-                    {rulesSaving ? "Saving…" : "Save Changes"}
-                  </Button>
-                </div>
-              </div>
-            )}
+            <LivePreview rules={savedRules} />
           </div>
         )}
       </section>
 
-      {/* ══════════ SECTION 2: APP SETTINGS ══════════ */}
+      {/* App Settings */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
               <Settings className="h-5 w-5" /> Other App Settings
             </h2>
-            <p className="text-muted-foreground text-sm mt-1">
+            <p className="text-muted-foreground text-sm mt-0.5">
               Key-value configuration for the bot. Public settings are sent to the bot automatically.
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={fetchSettings} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 mr-1 ${loading ? "animate-spin" : ""}`} /> Refresh
+            <Button variant="outline" size="sm" onClick={fetchSettings} disabled={loadingSettings}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${loadingSettings ? "animate-spin" : ""}`} /> Refresh
             </Button>
             <Button size="sm" onClick={openAddDialog}>
               <Plus className="h-4 w-4 mr-1" /> Add Setting
@@ -583,17 +638,16 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Hint */}
         <Card className="border-dashed mb-4">
-          <CardContent className="py-3 px-4 text-sm text-muted-foreground space-y-1">
+          <CardContent className="py-3 px-4 text-sm text-muted-foreground">
             <p>
               <code className="bg-muted px-1 rounded text-xs">support_contact_url</code> — The Telegram handle shown as "Contact Support" in the bot. Mark as <strong>Public</strong>.
             </p>
           </CardContent>
         </Card>
 
-        {loading ? (
-          <div className="text-center py-16 text-muted-foreground animate-pulse">Loading…</div>
+        {loadingSettings ? (
+          <div className="text-center py-16 text-muted-foreground animate-pulse">Loading...</div>
         ) : settings.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground">
             No settings yet.{" "}
@@ -605,18 +659,18 @@ export default function SettingsPage() {
               <Card key={s.key} className="hover:shadow-sm transition-shadow">
                 <CardContent className="py-4 flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="font-mono font-semibold text-sm">{s.key}</span>
                       {s.is_public
                         ? <Badge variant="secondary" className="text-xs gap-1"><Globe className="h-3 w-3" /> Public</Badge>
                         : <Badge variant="outline" className="text-xs gap-1"><Lock className="h-3 w-3" /> Private</Badge>}
                     </div>
-                    {s.description && <p className="text-xs text-muted-foreground mt-0.5">{s.description}</p>}
-                    <p className="text-sm mt-1 break-all">
+                    {s.description && <p className="text-xs text-muted-foreground mb-1">{s.description}</p>}
+                    <div className="rounded-md bg-muted/50 px-3 py-2 text-sm font-mono">
                       {s.value
-                        ? <span className="text-foreground">{s.value}</span>
-                        : <span className="text-muted-foreground italic">— empty —</span>}
-                    </p>
+                        ? <span className="text-foreground break-all">{s.value}</span>
+                        : <span className="text-muted-foreground italic">empty</span>}
+                    </div>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
                     <Button variant="ghost" size="icon" onClick={() => openEditDialog(s)} title="Edit">
@@ -634,7 +688,6 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* ── Add/Edit Dialog ─────────────────────────────────────────────────── */}
       <Dialog open={openAdd || !!editingSetting} onOpenChange={(o) => { if (!o) { setOpenAdd(false); setEditingSetting(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -661,19 +714,18 @@ export default function SettingsPage() {
             <div className="flex items-center gap-3">
               <Switch id="spublic" checked={form.is_public}
                 onCheckedChange={(v) => setForm((f) => ({ ...f, is_public: v }))} />
-              <Label htmlFor="spublic" className="cursor-pointer text-sm">Make this setting public (visible to the bot)</Label>
+              <Label htmlFor="spublic" className="cursor-pointer text-sm">Make public (visible to bot)</Label>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setOpenAdd(false); setEditingSetting(null); }}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving}>
-              <Save className="h-4 w-4 mr-1" />{saving ? "Saving…" : "Save"}
+            <Button onClick={handleSaveSetting} disabled={formSaving}>
+              <Save className="h-4 w-4 mr-1" />{formSaving ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Delete Dialog ───────────────────────────────────────────────────── */}
       <AlertDialog open={!!deletingKey} onOpenChange={(o) => !o && setDeletingKey(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -684,7 +736,7 @@ export default function SettingsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}
+            <AlertDialogAction onClick={handleDeleteSetting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Delete
             </AlertDialogAction>
