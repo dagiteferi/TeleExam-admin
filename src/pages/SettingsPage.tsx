@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Settings, Plus, Pencil, Trash2, RefreshCw,
   Globe, Lock, Save, Users, Zap, Gift,
-  ChevronRight, Info, Check, X, Eye,
+  ChevronRight, Info, Check, X, Eye, Video, Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -257,6 +257,174 @@ function SectionCard({ icon, title, description, children }: {
       </CardHeader>
       <CardContent className="pt-4 space-y-2.5">{children}</CardContent>
     </Card>
+  );
+}
+
+interface RecordingUser {
+  id: string;
+  telegram_id: number;
+  telegram_username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  department_name: string | null;
+  can_record?: boolean;
+}
+
+const userLabel = (u: RecordingUser) =>
+  [u.first_name, u.last_name].filter(Boolean).join(" ") || u.telegram_username || String(u.telegram_id);
+
+// Users allowed to screenshot / screen-record the bot (e.g. the marketing team)
+function RecordingAccessCard() {
+  const [allowed, setAllowed] = useState<RecordingUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState<RecordingUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const authHeaders = { headers: { Authorization: `Bearer ${getToken()}` } };
+
+  const fetchAllowed = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/admin/users/`, {
+        ...authHeaders, params: { can_record: true, limit: 200 },
+      });
+      setAllowed(res.data);
+    } catch {
+      toast.error("Failed to load recording access");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchAllowed(); }, []);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) { setResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await axios.get(`${API_BASE}/admin/users/`, {
+          ...authHeaders, params: { search: q, limit: 10 },
+        });
+        setResults(res.data);
+      } catch {
+        toast.error("User search failed");
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const setRecording = async (u: RecordingUser, allow: boolean) => {
+    setBusyId(u.id);
+    try {
+      await axios.post(`${API_BASE}/admin/users/${u.id}/recording`, undefined, {
+        ...authHeaders, params: { allowed: allow },
+      });
+      toast.success(allow ? `${userLabel(u)} can now record the bot` : `Recording removed for ${userLabel(u)}`);
+      setResults((rs) => rs.map((r) => (r.id === u.id ? { ...r, can_record: allow } : r)));
+      fetchAllowed();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to update recording access");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const allowedIds = new Set(allowed.map((u) => u.id));
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <Video className="h-5 w-5" /> Screen Recording Access
+          </h2>
+          <p className="text-muted-foreground text-sm mt-0.5">
+            Bot messages are protected for everyone. Users listed here (e.g. the marketing team) can
+            take screenshots and record the bot. The user gets a message and it applies immediately.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={fetchAllowed} disabled={loading}>
+          <RefreshCw className={`h-4 w-4 mr-1 ${loading ? "animate-spin" : ""}`} /> Refresh
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="pt-4 space-y-4">
+          <div>
+            <Label htmlFor="rec-search">Add a user</Label>
+            <div className="relative mt-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input id="rec-search" className="pl-9"
+                placeholder="Search by name, username or Telegram ID"
+                value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            {search.trim() && (
+              <div className="mt-2 rounded-lg border divide-y">
+                {searching ? (
+                  <p className="px-3 py-2 text-sm text-muted-foreground animate-pulse">Searching...</p>
+                ) : results.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">No users found.</p>
+                ) : results.map((u) => {
+                  const isAllowed = allowedIds.has(u.id) || !!u.can_record;
+                  return (
+                    <div key={u.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{userLabel(u)}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {u.telegram_username ? `@${u.telegram_username} · ` : ""}{u.telegram_id}
+                          {u.department_name ? ` · ${u.department_name}` : ""}
+                        </p>
+                      </div>
+                      {isAllowed ? (
+                        <Badge variant="secondary" className="gap-1"><Check className="h-3 w-3" /> Allowed</Badge>
+                      ) : (
+                        <Button size="sm" onClick={() => setRecording(u, true)} disabled={busyId === u.id}>
+                          <Plus className="h-4 w-4 mr-1" /> Allow
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
+          <div>
+            <p className="text-sm font-semibold mb-2">Allowed users ({allowed.length})</p>
+            {loading ? (
+              <div className="h-12 rounded-lg bg-muted animate-pulse" />
+            ) : allowed.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nobody can record the bot right now.</p>
+            ) : (
+              <div className="rounded-lg border divide-y">
+                {allowed.map((u) => (
+                  <div key={u.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{userLabel(u)}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {u.telegram_username ? `@${u.telegram_username} · ` : ""}{u.telegram_id}
+                      </p>
+                    </div>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
+                      onClick={() => setRecording(u, false)} disabled={busyId === u.id}>
+                      <Trash2 className="h-4 w-4 mr-1" /> Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -557,6 +725,8 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+      <RecordingAccessCard />
 
       {/* App Settings */}
       <section>

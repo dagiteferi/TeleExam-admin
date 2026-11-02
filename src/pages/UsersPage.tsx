@@ -478,8 +478,8 @@ export default function UsersPage() {
   const handleResetAccess = (user: User) =>
     askConfirm(
       {
-        title: "Reset All Access",
-        description: `Reset ALL access for ${userLabel(user)}? This removes PRO and full access and resets invites to 0. They will be notified via Telegram.`,
+        title: "Reset Account",
+        description: `Reset ${userLabel(user)} to a fresh start? This removes PRO, full access, recording access and both departments, and resets invites to 0. They must /start and choose a department again. Past results are kept. They will be notified via Telegram.`,
         confirmLabel: "Reset All",
         destructive: true,
       },
