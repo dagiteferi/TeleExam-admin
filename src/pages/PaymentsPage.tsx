@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import axios from "axios";
 import { getToken } from "@/lib/auth";
@@ -119,6 +120,9 @@ export default function PaymentsPage() {
   const [confirmDecision, setConfirmDecision] = useState<{ request: PaymentRequest; action: "approve" | "reject" } | null>(null);
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteTargets, setDeleteTargets] = useState<PaymentRequest[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Add Bank State
   const [openAddBank, setOpenAddBank] = useState(false);
@@ -300,6 +304,32 @@ export default function PaymentsPage() {
     }
   };
 
+  const toggleSelected = (id: string, checked: boolean) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+
+  const handleDelete = async () => {
+    if (!deleteTargets?.length) return;
+    setDeleting(true);
+    const results = await Promise.allSettled(
+      deleteTargets.map((r) => axios.delete(`${API_BASE}/admin/payments/requests/${r.id}`, authHeaders)),
+    );
+    const deletedIds = deleteTargets.filter((_, i) => results[i].status === "fulfilled").map((r) => r.id);
+    const failed = deleteTargets.length - deletedIds.length;
+
+    setRequests((prev) => prev.filter((r) => !deletedIds.includes(r.id)));
+    setSelectedIds((prev) => new Set([...prev].filter((id) => !deletedIds.includes(id))));
+    if (selectedRequest && deletedIds.includes(selectedRequest.id)) setSelectedRequest(null);
+
+    if (deletedIds.length) toast.success(`Deleted ${deletedIds.length} payment request${deletedIds.length !== 1 ? "s" : ""}.`);
+    if (failed) toast.error(`${failed} could not be deleted. Please try again.`);
+    setDeleting(false);
+    setDeleteTargets(null);
+  };
+
   const renderSenderSummary = (userId: string) => {
     const sender = senders[userId];
     if (!sender || sender === "loading") {
@@ -359,9 +389,34 @@ export default function PaymentsPage() {
         {/* PAYMENT REQUESTS TAB */}
         <TabsContent value="requests" className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>User Payment Requests</CardTitle>
-              <CardDescription>Review uploaded transaction screenshots and approve PRO access.</CardDescription>
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+              <div>
+                <CardTitle>User Payment Requests</CardTitle>
+                <CardDescription>
+                  Review uploaded transaction screenshots and approve PRO access. Tick requests to delete several at once.
+                </CardDescription>
+              </div>
+              {requests.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setSelectedIds(selectedIds.size === requests.length ? new Set() : new Set(requests.map((r) => r.id)))
+                    }
+                  >
+                    {selectedIds.size === requests.length ? "Clear selection" : "Select all"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={selectedIds.size === 0}
+                    onClick={() => setDeleteTargets(requests.filter((r) => selectedIds.has(r.id)))}
+                  >
+                    <Trash2 className="mr-1 h-4 w-4" /> Delete selected{selectedIds.size ? ` (${selectedIds.size})` : ""}
+                  </Button>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               {requests.length === 0 ? (
@@ -369,11 +424,24 @@ export default function PaymentsPage() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {requests.map((req) => (
-                    <Card key={req.id} className="overflow-hidden border">
+                    <Card
+                      key={req.id}
+                      className={`overflow-hidden border ${selectedIds.has(req.id) ? "ring-2 ring-destructive" : ""}`}
+                    >
                       <div
                         className="h-48 bg-muted flex items-center justify-center overflow-hidden relative cursor-pointer group"
                         onClick={() => setSelectedRequest(req)}
                       >
+                        <div
+                          className="absolute left-2 top-2 z-10 rounded-md bg-background/90 p-1.5 shadow"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Checkbox
+                            checked={selectedIds.has(req.id)}
+                            onCheckedChange={(v) => toggleSelected(req.id, v === true)}
+                            aria-label="Select for deletion"
+                          />
+                        </div>
                         <img
                           src={req.screenshot_url}
                           alt="Receipt Screenshot"
@@ -433,6 +501,16 @@ export default function PaymentsPage() {
                               </Button>
                             </>
                           )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0 text-destructive hover:text-destructive"
+                            onClick={() => setDeleteTargets([req])}
+                            title="Delete this request"
+                            aria-label="Delete this request"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -810,6 +888,42 @@ export default function PaymentsPage() {
             >
               {decisionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {confirmDecision?.action === "approve" ? "Approve" : "Reject"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE CONFIRMATION */}
+      <Dialog open={!!deleteTargets} onOpenChange={(open) => { if (!open && !deleting) setDeleteTargets(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Delete {deleteTargets?.length === 1 ? "payment request" : `${deleteTargets?.length ?? 0} payment requests`}?
+            </DialogTitle>
+            <DialogDescription>
+              The request{deleteTargets?.length === 1 ? " and its receipt image are" : "s and their receipt images are"} removed
+              permanently. This can't be undone. The user is <strong>not</strong> notified.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteTargets?.some((r) => r.status === "approved") && (
+            <p className="text-sm rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
+              ⚠️ {deleteTargets.filter((r) => r.status === "approved").length} of these {deleteTargets.length === 1 ? "is" : "are"} approved.
+              Deleting only removes the record. The user keeps their PRO / Dual access.
+            </p>
+          )}
+          {deleteTargets?.some((r) => r.status === "pending") && (
+            <p className="text-sm rounded-md border px-3 py-2 text-muted-foreground">
+              {deleteTargets.filter((r) => r.status === "pending").length} pending request(s) will be removed without a decision.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteTargets(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
