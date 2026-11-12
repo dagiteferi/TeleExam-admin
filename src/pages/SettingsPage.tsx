@@ -48,33 +48,63 @@ interface InvitationRules {
   max_invite_years: number;
   free_courses_ratio: number;
   courses_per_invite: number;
+  max_invite_courses_ratio: number;
+  lock_newest_year: boolean;
+  lock_last_course: boolean;
+  free_ai_daily_limit: number;
   ai_bonus_per_invite: number;
   summary?: string;
   updated_at?: string | null;
 }
 const defaultForm: SettingFormState = { key: "", value: "", description: "", is_public: false };
+// Same defaults as the backend (app/schemas/invitation.py)
 const defaultRules: InvitationRules = {
-  free_years: 1, invites_per_year: 2, years_per_invite: 1, max_invite_years: 1,
-  free_courses_ratio: 0.25, courses_per_invite: 1, ai_bonus_per_invite: 0,
+  free_years: 1, invites_per_year: 1, years_per_invite: 1, max_invite_years: 1,
+  free_courses_ratio: 0.25, courses_per_invite: 1, max_invite_courses_ratio: 1,
+  lock_newest_year: true, lock_last_course: true,
+  free_ai_daily_limit: 5, ai_bonus_per_invite: 0,
 };
+const NEW_RULE_KEYS: (keyof InvitationRules)[] = [
+  "max_invite_courses_ratio", "lock_newest_year", "lock_last_course", "free_ai_daily_limit",
+];
+
+// Mirrors InvitationRuleConfig in the backend: what a student with `invites` gets
+function computeUnlocks(rules: InvitationRules, invites: number, totalYears: number, totalCourses: number) {
+  const freeYears = Math.min(rules.free_years, totalYears);
+  const yearCeiling = rules.lock_newest_year ? totalYears - 1 : totalYears;
+  const yearCap = Math.max(freeYears, Math.min(yearCeiling, freeYears + rules.max_invite_years));
+  const extraYears = rules.years_per_invite > 1
+    ? invites * rules.years_per_invite
+    : Math.floor(invites / rules.invites_per_year);
+  const years = Math.max(freeYears, Math.min(yearCap, freeYears + extraYears));
+
+  const baseCourses = Math.min(totalCourses, Math.max(1, Math.floor(totalCourses * rules.free_courses_ratio)));
+  const courseCeiling = rules.lock_last_course ? totalCourses - 1 : totalCourses;
+  const ratioCap = Math.floor(totalCourses * rules.max_invite_courses_ratio);
+  const courseCap = Math.max(baseCourses, Math.min(courseCeiling, ratioCap));
+  const courses = Math.min(courseCap, baseCourses + invites * rules.courses_per_invite);
+
+  const ai = rules.free_ai_daily_limit + invites * rules.ai_bonus_per_invite;
+  return { years, yearCap, courses, courseCap, ai };
+}
+
+function proOnlyText(rules: InvitationRules) {
+  const parts = [
+    rules.lock_newest_year && "the newest exam year",
+    rules.lock_last_course && "the last course",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" and ") : null;
+}
 
 // Live Preview
 function LivePreview({ rules }: { rules: InvitationRules }) {
   const [preview, setPreview] = useState(2);
   const totalYears = 5;
   const totalCourses = 8;
-  // Mirrors the backend: invites never unlock the newest year or the last course (PRO only)
-  const freeYears = Math.min(rules.free_years, totalYears);
-  const yearCap = Math.max(freeYears, Math.min(totalYears - 1, freeYears + rules.max_invite_years));
-  const extraYears = rules.years_per_invite > 1
-    ? preview * rules.years_per_invite
-    : Math.floor(preview / rules.invites_per_year);
-  const unlockedYears = Math.max(freeYears, Math.min(yearCap, freeYears + extraYears));
-  const baseCourses = Math.min(totalCourses, Math.max(1, Math.floor(totalCourses * rules.free_courses_ratio)));
-  const courseCap = Math.max(baseCourses, totalCourses - 1);
-  const unlockedCourses = Math.min(courseCap, baseCourses + preview * rules.courses_per_invite);
+  const { years: unlockedYears, yearCap, courses: unlockedCourses, courseCap, ai: aiLimit } =
+    computeUnlocks(rules, preview, totalYears, totalCourses);
   const maxedOut = unlockedYears >= yearCap && unlockedCourses >= courseCap;
-  const aiLimit = 5 + preview * rules.ai_bonus_per_invite;
+  const unlocksAll = yearCap >= totalYears && courseCap >= totalCourses;
 
   return (
     <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
@@ -100,9 +130,13 @@ function LivePreview({ rules }: { rules: InvitationRules }) {
         </div>
         <div className={`rounded-lg px-4 py-2 text-center border ${maxedOut ? "bg-green-500/10 border-green-500/30" : "bg-amber-500/10 border-amber-500/30"}`}>
           <p className={`font-semibold text-sm ${maxedOut ? "text-green-600" : "text-amber-600"}`}>
-            {maxedOut
-              ? "Max reachable by invites. The newest year and full access still require PRO."
-              : "Full access is PRO only. Invites never unlock the newest year or every course."}
+            {unlocksAll
+              ? (maxedOut
+                ? "Everything unlocked by invites. With these rules invites can open full access."
+                : "With these rules, enough invites unlock everything.")
+              : (maxedOut
+                ? "Max reachable by invites. Everything else requires PRO."
+                : `Invites reach at most ${yearCap}/${totalYears} years and ${courseCap}/${totalCourses} courses. The rest is PRO only.`)}
           </p>
         </div>
         <div className="grid grid-cols-3 gap-3">
@@ -241,6 +275,33 @@ function RuleRow({
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// On/off rule row: saves as soon as it is switched
+function ToggleRuleRow({ label, sublabel, savedValue, onSave }: {
+  label: string; sublabel: string; savedValue: boolean; onSave: (v: boolean) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const handleChange = async (v: boolean) => {
+    setSaving(true);
+    try { await onSave(v); } catch { /* toast shown by onSave */ } finally { setSaving(false); }
+  };
+  return (
+    <div className="rounded-xl border bg-muted/20 hover:bg-muted/40 transition-all duration-200">
+      <div className="flex items-start gap-3 p-4">
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-semibold">{label}</span>
+          <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{sublabel}</p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={`text-sm font-bold ${savedValue ? "text-primary" : "text-muted-foreground"}`}>
+            {savedValue ? "PRO only" : "Invites can unlock"}
+          </span>
+          <Switch checked={savedValue} onCheckedChange={handleChange} disabled={saving} />
+        </div>
       </div>
     </div>
   );
@@ -438,6 +499,8 @@ export default function SettingsPage() {
   const [formSaving, setFormSaving] = useState(false);
   const [savedRules, setSavedRules] = useState<InvitationRules>(defaultRules);
   const [rulesLoading, setRulesLoading] = useState(true);
+  // False when the API is an older version that doesn't know the newer rules yet
+  const [backendHasNewRules, setBackendHasNewRules] = useState(true);
 
   const token = getToken();
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
@@ -446,7 +509,8 @@ export default function SettingsPage() {
     setRulesLoading(true);
     try {
       const res = await axios.get(`${API_BASE}/admin/settings/invitation`, authHeaders);
-      setSavedRules(res.data);
+      setBackendHasNewRules(NEW_RULE_KEYS.every((k) => k in res.data));
+      setSavedRules({ ...defaultRules, ...res.data });
     } catch {
       toast.error("Failed to load referral rules");
     } finally {
@@ -473,7 +537,8 @@ export default function SettingsPage() {
     const { summary, updated_at, ...payload } = updated;
     try {
       const res = await axios.put(`${API_BASE}/admin/settings/invitation`, payload, authHeaders);
-      setSavedRules(res.data);
+      setBackendHasNewRules(NEW_RULE_KEYS.every((k) => k in res.data));
+      setSavedRules({ ...defaultRules, ...res.data });
       toast.success("Saved!");
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to save");
@@ -538,9 +603,12 @@ export default function SettingsPage() {
                 { label: "Invites / Year", value: savedRules.invites_per_year },
                 { label: "Free Courses", value: `${Math.round(savedRules.free_courses_ratio * 100)}%` },
                 { label: "Courses / Invite", value: savedRules.courses_per_invite },
-                { label: "Full Access", value: "PRO only" },
+                { label: "Max Courses by Invites", value: `${Math.round(savedRules.max_invite_courses_ratio * 100)}%` },
                 { label: "Years / Invite", value: savedRules.years_per_invite },
                 { label: "Max Years by Invites", value: savedRules.max_invite_years },
+                { label: "Newest Year", value: savedRules.lock_newest_year ? "PRO only" : "Invites" },
+                { label: "Last Course", value: savedRules.lock_last_course ? "PRO only" : "Invites" },
+                { label: "Free AI / Day", value: savedRules.free_ai_daily_limit },
                 { label: "AI Bonus", value: savedRules.ai_bonus_per_invite === 0 ? "Off" : `+${savedRules.ai_bonus_per_invite}/invite` },
               ] as { label: string; value: string | number }[]).map((item) => (
                 <div key={item.label} className="rounded-lg border bg-background p-3">
@@ -579,6 +647,13 @@ export default function SettingsPage() {
             Refresh
           </Button>
         </div>
+
+        {!rulesLoading && !backendHasNewRules && (
+          <p className="text-sm mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300">
+            ⚠️ The API server is running an older version that doesn't support the course limit, PRO-only locks
+            and free AI limit rules yet. Changes to those rules won't be saved until the API is updated.
+          </p>
+        )}
 
         {rulesLoading ? (
           <div className="grid gap-3">
@@ -643,10 +718,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-2 flex-wrap text-sm">
                   {[0, 1, 2, 3, 5]
                     .map((invites, idx, arr) => {
-                      const extra = savedRules.years_per_invite > 1
-                        ? invites * savedRules.years_per_invite
-                        : Math.floor(invites / savedRules.invites_per_year);
-                      const years = `${savedRules.free_years + Math.min(extra, savedRules.max_invite_years)}`;
+                      const years = String(computeUnlocks(savedRules, invites, 5, 8).years);
                       return (
                         <React.Fragment key={invites}>
                           <div className="rounded-lg border bg-white dark:bg-card px-3 py-1.5 text-xs font-medium text-center">
@@ -659,8 +731,18 @@ export default function SettingsPage() {
                       );
                     })}
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Invites open at most {savedRules.max_invite_years} extra year{savedRules.max_invite_years !== 1 ? "s" : ""}, and never the newest year. Every other year requires PRO.</p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Example department with 5 years. Invites open at most {savedRules.max_invite_years} extra
+                  year{savedRules.max_invite_years !== 1 ? "s" : ""}
+                  {savedRules.lock_newest_year ? ", and never the newest year" : ""}. Every other year requires PRO.
+                </p>
               </div>
+              <ToggleRuleRow
+                label="Newest Year is PRO Only"
+                sublabel="On: invites can never open the newest exam year in a department. Off: invites can open it if Max Extra Years allows."
+                savedValue={savedRules.lock_newest_year}
+                onSave={(v) => saveOneRule("lock_newest_year", v)}
+              />
             </SectionCard>
 
             <SectionCard
@@ -670,35 +752,58 @@ export default function SettingsPage() {
             >
               <RuleRow
                 label="Courses Unlocked per Invite"
-                sublabel="E.g. '1' = every invite unlocks one more course. The last course always stays PRO only."
+                sublabel="E.g. '1' = every invite unlocks one more course."
                 savedValue={savedRules.courses_per_invite}
                 min={1}
                 onSave={(v) => saveOneRule("courses_per_invite", v)}
               />
+              <RuleRow
+                label="Max Courses by Invites"
+                sublabel="The highest share of courses invites can ever open (e.g. 60%). The rest require PRO. Free courses always stay free."
+                tooltip="E.g. 60% with 10 courses = invites open at most 6 courses. 100% = no limit."
+                savedValue={savedRules.max_invite_courses_ratio}
+                min={0} max={1} step={0.05}
+                onSave={(v) => saveOneRule("max_invite_courses_ratio", v)}
+              />
+              <ToggleRuleRow
+                label="Last Course is PRO Only"
+                sublabel="On: invites can never open the last course. Off: invites can open every course allowed by Max Courses."
+                savedValue={savedRules.lock_last_course}
+                onSave={(v) => saveOneRule("lock_last_course", v)}
+              />
               <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4">
-                <p className="text-sm font-bold text-primary">💎 Full access is PRO only</p>
+                <p className="text-sm font-bold text-primary">💎 What stays PRO only</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Invites can never unlock <strong>everything</strong>. The newest exam year in each department and
-                  the last course always require a PRO payment.
+                  {proOnlyText(savedRules)
+                    ? <>Invites can never unlock {proOnlyText(savedRules)}. Anything above the year and course limits also requires PRO.</>
+                    : <>No item is locked to PRO. Only the year and course limits above stop invites from unlocking everything.</>}
                 </p>
               </div>
             </SectionCard>
 
             <SectionCard
               icon={<Gift className="h-5 w-5 text-purple-500" />}
-              title="AI Explanation Bonus"
-              description="Optionally reward students with extra daily AI explanations per invite."
+              title="AI Explanations (Free Users)"
+              description="Daily free AI explanations for non-PRO students, and an optional bonus per invite. PRO has no limit."
             >
               <div className="flex items-start gap-4">
-                <div className="flex-1">
+                <div className="flex-1 space-y-2.5">
+                  <RuleRow
+                    label="Free AI Explanations per Day"
+                    sublabel="How many AI explanations a non-PRO student gets each day before any invite bonus."
+                    tooltip="Set to 0 to make AI explanations PRO only (plus any invite bonus)."
+                    savedValue={savedRules.free_ai_daily_limit}
+                    min={0}
+                    onSave={(v) => saveOneRule("free_ai_daily_limit", v)}
+                  />
                   <RuleRow
                     label="Bonus AI Explanations per Invite"
                     sublabel={
                       savedRules.ai_bonus_per_invite === 0
-                        ? "Currently disabled — all students get the same base AI limit (5/day)."
-                        : `A student with 5 invites gets ${5 + 5 * savedRules.ai_bonus_per_invite} AI explanations/day.`
+                        ? `Currently disabled. All free students get the same limit (${savedRules.free_ai_daily_limit}/day).`
+                        : `A student with 5 invites gets ${savedRules.free_ai_daily_limit + 5 * savedRules.ai_bonus_per_invite} AI explanations/day.`
                     }
-                    tooltip="Set to 0 to disable. Base is 5 AI explanations/day for all students."
+                    tooltip="Set to 0 to disable."
                     savedValue={savedRules.ai_bonus_per_invite}
                     min={0}
                     onSave={(v) => saveOneRule("ai_bonus_per_invite", v)}
@@ -706,14 +811,14 @@ export default function SettingsPage() {
                 </div>
                 <div className="rounded-xl border bg-muted/30 p-4 text-center min-w-[110px]">
                   <p className="text-xs text-muted-foreground">Base limit</p>
-                  <p className="text-3xl font-black">5</p>
+                  <p className="text-3xl font-black">{savedRules.free_ai_daily_limit}</p>
                   <p className="text-xs text-muted-foreground">questions/day</p>
                   {savedRules.ai_bonus_per_invite > 0 && (
                     <>
                       <Separator className="my-2" />
                       <p className="text-xs text-muted-foreground">With 5 invites</p>
                       <p className="text-2xl font-black text-purple-500">
-                        {5 + 5 * savedRules.ai_bonus_per_invite}
+                        {savedRules.free_ai_daily_limit + 5 * savedRules.ai_bonus_per_invite}
                       </p>
                     </>
                   )}
