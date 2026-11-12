@@ -422,98 +422,99 @@ export default function PaymentsPage() {
               {requests.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No payment requests submitted yet.</p>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="rounded-lg border divide-y">
                   {requests.map((req) => (
-                    <Card
+                    <div
                       key={req.id}
-                      className={`overflow-hidden border ${selectedIds.has(req.id) ? "ring-2 ring-destructive" : ""}`}
+                      className={`flex flex-wrap items-center gap-3 px-3 py-2.5 transition-colors ${
+                        selectedIds.has(req.id) ? "bg-destructive/5" : "hover:bg-muted/40"
+                      }`}
                     >
-                      <div
-                        className="h-48 bg-muted flex items-center justify-center overflow-hidden relative cursor-pointer group"
-                        onClick={() => setSelectedRequest(req)}
+                      <Checkbox
+                        checked={selectedIds.has(req.id)}
+                        onCheckedChange={(v) => toggleSelected(req.id, v === true)}
+                        aria-label="Select for deletion"
+                      />
+
+                      {/* Small receipt thumbnail: click to see it full size */}
+                      <button
+                        type="button"
+                        className="h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted hover:ring-2 hover:ring-primary"
+                        onClick={() => setPreviewUrl(req.screenshot_url)}
+                        title="View receipt"
                       >
-                        <div
-                          className="absolute left-2 top-2 z-10 rounded-md bg-background/90 p-1.5 shadow"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Checkbox
-                            checked={selectedIds.has(req.id)}
-                            onCheckedChange={(v) => toggleSelected(req.id, v === true)}
-                            aria-label="Select for deletion"
-                          />
-                        </div>
                         <img
                           src={req.screenshot_url}
-                          alt="Receipt Screenshot"
-                          className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+                          alt="Receipt"
+                          loading="lazy"
+                          className="h-full w-full object-cover"
                           onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
+                            (e.target as HTMLElement).style.display = "none";
                           }}
                         />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
-                          <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 text-white text-xs px-3 py-1.5 rounded-full">
-                            🔍 View details
-                          </span>
-                        </div>
-                      </div>
-                      <CardContent className="p-4 space-y-3">
-                        <div className="flex items-start justify-between gap-2">
-                          {renderSenderSummary(req.user_id)}
-                          <Badge
-                            variant={
-                              req.status === "approved"
-                                ? "default"
-                                : req.status === "rejected"
-                                ? "destructive"
-                                : "secondary"
-                            }
-                          >
-                            {req.status}
-                          </Badge>
-                        </div>
-                        <PaymentKindBadge request={req} />
-                        <p className="text-xs text-muted-foreground">Submitted: {new Date(req.created_at).toLocaleString()}</p>
+                      </button>
+
+                      <div className="min-w-[180px] flex-1">
+                        {renderSenderSummary(req.user_id)}
                         {req.status === "rejected" && req.rejection_reason && (
-                          <p className="text-xs rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 line-clamp-2">
+                          <p className="mt-1 text-xs text-muted-foreground truncate max-w-md" title={req.rejection_reason}>
                             <span className="font-semibold text-destructive">Reason:</span> {req.rejection_reason}
                           </p>
                         )}
-                        <div className="flex gap-2 pt-2">
-                          <Button size="sm" variant="outline" className="w-full" onClick={() => setSelectedRequest(req)}>
-                            Details
-                          </Button>
-                          {req.status === "pending" && (
-                            <>
-                              <Button
-                                size="sm"
-                                className="w-full bg-green-600 hover:bg-green-700"
-                                onClick={() => setConfirmDecision({ request: req, action: "approve" })}
-                              >
-                                <CheckCircle className="mr-1 h-4 w-4" /> Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                className="w-full"
-                                onClick={() => setConfirmDecision({ request: req, action: "reject" })}
-                              >
-                                <XCircle className="mr-1 h-4 w-4" /> Reject
-                              </Button>
-                            </>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="shrink-0 text-destructive hover:text-destructive"
-                            onClick={() => setDeleteTargets([req])}
-                            title="Delete this request"
-                            aria-label="Delete this request"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
+                      </div>
+
+                      <div className="w-40 shrink-0 space-y-1">
+                        <PaymentKindBadge request={req} />
+                        <p className="text-xs text-muted-foreground">{new Date(req.created_at).toLocaleString()}</p>
+                      </div>
+
+                      <Badge
+                        className="w-20 shrink-0 justify-center capitalize"
+                        variant={
+                          req.status === "approved"
+                            ? "default"
+                            : req.status === "rejected"
+                            ? "destructive"
+                            : "secondary"
+                        }
+                      >
+                        {req.status}
+                      </Badge>
+
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Button size="sm" variant="outline" onClick={() => setSelectedRequest(req)}>
+                          Details
+                        </Button>
+                        {req.status === "pending" && (
+                          <>
+                            <Button
+                              size="sm"
+                              className="bg-green-600 hover:bg-green-700"
+                              onClick={() => setConfirmDecision({ request: req, action: "approve" })}
+                            >
+                              <CheckCircle className="mr-1 h-4 w-4" /> Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => setConfirmDecision({ request: req, action: "reject" })}
+                            >
+                              <XCircle className="mr-1 h-4 w-4" /> Reject
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => setDeleteTargets([req])}
+                          title="Delete this request"
+                          aria-label="Delete this request"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
