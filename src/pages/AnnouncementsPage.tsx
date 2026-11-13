@@ -14,6 +14,8 @@ import {
   ChevronDown,
   ChevronUp,
   ListChecks,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -68,6 +70,9 @@ interface Announcement {
   pending_count: number;
   failed_count: number;
   cancelled_count: number;
+  version: number; // 1 = never edited
+  updating_count: number; // delivered copies the bot is still updating to the latest text
+  untracked_count: number; // delivered before message ids were recorded: can't be edited or deleted in chats
 }
 
 const AUDIENCES: { value: Audience; label: string; hint: string }[] = [
@@ -166,6 +171,11 @@ export default function AnnouncementsPage() {
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [deliveryFilter, setDeliveryFilter] = useState<"all" | DeliveryStatus>("all");
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [editing, setEditing] = useState<Announcement | null>(null);
+  const [editText, setEditText] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deleting, setDeleting] = useState<Announcement | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const selectedIds = Object.keys(selected);
   const targetReady =
@@ -231,9 +241,9 @@ export default function AnnouncementsPage() {
     fetchHistory();
   }, [fetchHistory]);
 
-  // Refresh delivery progress while messages are still waiting to be sent
+  // Refresh progress while messages are still waiting to be sent or edited
   useEffect(() => {
-    if (!history.some((a) => a.pending_count > 0)) return;
+    if (!history.some((a) => a.pending_count > 0 || a.updating_count > 0)) return;
     const timer = setInterval(fetchHistory, 5000);
     return () => clearInterval(timer);
   }, [history, fetchHistory]);
@@ -303,6 +313,44 @@ export default function AnnouncementsPage() {
       fetchHistory();
     } catch (err) {
       toast.error(apiErrorDetail(err) || "Failed to cancel");
+    }
+  };
+
+  const openEdit = (a: Announcement) => {
+    setEditing(a);
+    setEditText(a.text);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editing) return;
+    setSavingEdit(true);
+    try {
+      await api.put(`/admin/announcements/${editing.id}`, { text: editText.trim() });
+      const edits = editing.sent_count - editing.untracked_count;
+      toast.success(edits > 0 ? `Saved. Updating it in ${edits} chat(s)…` : "Announcement updated");
+      setEditing(null);
+      fetchHistory();
+    } catch (err) {
+      toast.error(apiErrorDetail(err) || "Failed to update announcement");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      const r = await api.delete(`/admin/announcements/${deleting.id}`);
+      const removing: number = r.data?.removing_count ?? 0;
+      toast.success(removing > 0 ? `Deleted. Removing it from ${removing} chat(s)…` : "Announcement deleted");
+      setDeleting(null);
+      if (detailsFor?.id === deleting.id) setDetailsFor(null);
+      fetchHistory();
+    } catch (err) {
+      toast.error(apiErrorDetail(err) || "Failed to delete announcement");
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -515,6 +563,17 @@ export default function AnnouncementsPage() {
                         {new Date(a.created_at).toLocaleString()}
                         {a.created_by ? ` · by ${a.created_by}` : ""}
                       </span>
+                      {a.version > 1 && (
+                        <Badge variant="outline" className="text-[10px]">
+                          Edited
+                        </Badge>
+                      )}
+                      {a.updating_count > 0 && (
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Updating {a.updating_count} chat
+                          {a.updating_count === 1 ? "" : "s"}…
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1">
                       {a.pending_count > 0 && (
@@ -524,6 +583,17 @@ export default function AnnouncementsPage() {
                       )}
                       <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openDetails(a)}>
                         <ListChecks className="mr-1 h-3.5 w-3.5" /> Recipients
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(a)}>
+                        <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs text-destructive"
+                        onClick={() => setDeleting(a)}
+                      >
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
                       </Button>
                     </div>
                   </div>
@@ -659,6 +729,71 @@ export default function AnnouncementsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit: waiting users get the new text, delivered copies are edited in their chats */}
+      <Dialog open={!!editing} onOpenChange={(open) => !open && !savingEdit && setEditing(null)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Edit announcement</DialogTitle>
+            <DialogDescription>
+              {editing && editing.sent_count - editing.untracked_count > 0
+                ? `The ${editing.sent_count - editing.untracked_count} delivered message(s) are edited in users' chats (Telegram marks them "edited"). `
+                : ""}
+              {editing && editing.pending_count > 0 ? `${editing.pending_count} waiting user(s) get the new text. ` : ""}
+              {editing && editing.untracked_count > 0
+                ? `${editing.untracked_count} copy(ies) were sent before editing was available and stay as they are.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea rows={8} maxLength={MAX_LENGTH} value={editText} onChange={(e) => setEditText(e.target.value)} />
+          <p className="text-[11px] text-muted-foreground text-right">
+            {editText.length}/{MAX_LENGTH}
+          </p>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditing(null)} disabled={savingEdit}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEdit}
+              disabled={savingEdit || !editText.trim() || editText.trim() === editing?.text}
+            >
+              {savingEdit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete: stop sending, remove from history and from users' chats */}
+      <Dialog open={!!deleting} onOpenChange={(open) => !open && !deleteBusy && setDeleting(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete announcement?</DialogTitle>
+            <DialogDescription>
+              It stops sending, disappears from this list, and the bot removes it from users' chats. Telegram only
+              lets a bot delete messages less than 48 hours old; older copies are replaced with "This announcement
+              was withdrawn."
+              {deleting && deleting.untracked_count > 0
+                ? ` ${deleting.untracked_count} copy(ies) were sent before deleting was available and stay in those chats.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {deleting && (
+            <div className="rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
+              {deleting.text}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleting(null)} disabled={deleteBusy}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleteBusy}>
+              {deleteBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete for everyone
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={confirmOpen} onOpenChange={(open) => !sending && setConfirmOpen(open)}>
         <DialogContent>
           <DialogHeader>
@@ -669,7 +804,7 @@ export default function AnnouncementsPage() {
               {audience === "users" && selectedIds.length <= 3
                 ? ` · ${Object.values(selected).map(pickUserName).join(", ")}`
                 : ""}
-              ). It can't be unsent once delivered.
+              ). You can edit or delete it afterwards.
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">
