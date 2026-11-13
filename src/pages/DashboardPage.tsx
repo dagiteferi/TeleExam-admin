@@ -3,7 +3,7 @@ import { Users, FileText, Activity, Ban, TrendingUp, TrendingDown, Building2 } f
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
-  AreaChart, Area, BarChart, Bar, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -29,17 +29,71 @@ interface SummaryData {
   users_without_department?: number;
 }
 
-const shortName = (name: string) => (name.length > 26 ? `${name.slice(0, 25)}…` : name);
+// Departments past this many share one "Other" slice, so every slice keeps a distinct color.
+const MAX_SLICES = 7;
+const OTHER_COLOR = "hsl(var(--muted-foreground))";
+
+interface Slice {
+  key: string;
+  name: string;
+  users: number;
+  pro_users: number;
+  free_users: number;
+  share: number;
+  color: string;
+  members?: string[]; // departments folded into "Other"
+}
+
+function toSlices(departments: DepartmentCount[]): Slice[] {
+  const assigned = departments.reduce((sum, d) => sum + d.users, 0);
+  const share = (n: number) => (assigned ? Math.round((n / assigned) * 1000) / 10 : 0);
+  const sorted = [...departments].filter((d) => d.users > 0).sort((a, b) => b.users - a.users);
+  // Fold the tail only when it is 2+ departments; a single leftover keeps its own slice.
+  const keep = sorted.length > MAX_SLICES + 1 ? sorted.slice(0, MAX_SLICES) : sorted;
+  const rest = sorted.slice(keep.length);
+  const slices: Slice[] = keep.map((d, i) => ({
+    key: d.department_id,
+    name: d.name,
+    users: d.users,
+    pro_users: d.pro_users,
+    free_users: d.users - d.pro_users,
+    share: share(d.users),
+    color: `var(--series-${i + 1})`,
+  }));
+  if (rest.length) {
+    const users = rest.reduce((sum, d) => sum + d.users, 0);
+    const pro = rest.reduce((sum, d) => sum + d.pro_users, 0);
+    slices.push({
+      key: "other",
+      name: `Other (${rest.length} departments)`,
+      users,
+      pro_users: pro,
+      free_users: users - pro,
+      share: share(users),
+      color: OTHER_COLOR,
+      members: rest.map((d) => `${d.name} · ${d.users}`),
+    });
+  }
+  return slices;
+}
 
 function DepartmentTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
-  const d = payload[0].payload as DepartmentCount & { free_users: number; share: number };
+  const d = payload[0].payload as Slice;
   return (
-    <div className="rounded-lg border bg-card px-3 py-2 text-xs shadow-md">
+    <div className="rounded-lg border bg-card px-3 py-2 text-xs shadow-md max-w-[260px]">
       <p className="font-semibold text-sm mb-1">{d.name}</p>
-      <p><span className="font-bold">{d.users}</span> users ({d.share}% of users with a department)</p>
-      <p className="text-primary">{d.pro_users} PRO</p>
-      <p className="text-muted-foreground">{d.free_users} free</p>
+      <p>
+        <span className="font-bold">{d.users}</span> users ({d.share}% of users with a department)
+      </p>
+      <p>{d.pro_users} PRO · {d.free_users} free</p>
+      {d.members && (
+        <ul className="mt-1 border-t pt-1 text-muted-foreground">
+          {d.members.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -47,13 +101,9 @@ function DepartmentTooltip({ active, payload }: any) {
 function UsersByDepartmentCard({ departments, withoutDepartment }: {
   departments: DepartmentCount[]; withoutDepartment: number;
 }) {
-  const assigned = departments.reduce((sum, d) => sum + d.users, 0);
-  const rows = departments.map((d) => ({
-    ...d,
-    free_users: d.users - d.pro_users,
-    share: assigned ? Math.round((d.users / assigned) * 100) : 0,
-  }));
-  const height = Math.max(160, rows.length * 40 + 30);
+  const slices = toSlices(departments);
+  const total = slices.reduce((sum, s) => sum + s.users, 0);
+  const [active, setActive] = useState<string | null>(null);
 
   return (
     <Card className="glass-card overflow-hidden">
@@ -62,38 +112,68 @@ function UsersByDepartmentCard({ departments, withoutDepartment }: {
           <Building2 className="h-4 w-4" /> Users per Department
         </CardTitle>
         <CardDescription>
-          Each student counted once, by their main department. Hover a bar for details.
+          Each student counted once, by their main department. Hover a slice or a row for PRO / free details.
         </CardDescription>
-        <div className="flex flex-wrap gap-4 pt-2 text-xs">
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-primary/35" /> Free users
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-primary" /> PRO users
-          </span>
-        </div>
       </CardHeader>
       <CardContent>
-        {rows.length === 0 ? (
+        {slices.length === 0 ? (
           <p className="text-sm text-muted-foreground">No departments yet.</p>
         ) : (
-          <div className="w-full" style={{ height }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} layout="vertical" margin={{ left: 8, right: 48, top: 0, bottom: 0 }} barSize={22}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                <XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false}
-                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} />
-                <YAxis type="category" dataKey="name" width={190} axisLine={false} tickLine={false}
-                  tickFormatter={shortName}
-                  tick={{ fontSize: 12, fill: "hsl(var(--foreground))" }} />
-                <Tooltip content={<DepartmentTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.5 }} />
-                <Bar dataKey="pro_users" stackId="u" fill="hsl(var(--primary))" radius={[4, 0, 0, 4]} />
-                <Bar dataKey="free_users" stackId="u" fill="hsl(var(--primary) / 0.35)" radius={[0, 4, 4, 0]}>
-                  <LabelList dataKey="users" position="right"
-                    style={{ fontSize: 12, fontWeight: 600, fill: "hsl(var(--foreground))" }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="grid gap-6 md:grid-cols-[minmax(220px,300px)_1fr] items-center">
+            <div className="relative mx-auto w-full max-w-[300px] aspect-square">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={slices}
+                    dataKey="users"
+                    nameKey="name"
+                    innerRadius="62%"
+                    outerRadius="100%"
+                    startAngle={90}
+                    endAngle={-270}
+                    stroke="hsl(var(--card))"
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                    onMouseEnter={(_, i) => setActive(slices[i]?.key ?? null)}
+                    onMouseLeave={() => setActive(null)}
+                  >
+                    {slices.map((s) => (
+                      <Cell
+                        key={s.key}
+                        fill={s.color}
+                        opacity={active && active !== s.key ? 0.35 : 1}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<DepartmentTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Total in the middle of the donut */}
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-3xl font-bold leading-none">{total}</span>
+                <span className="text-xs text-muted-foreground mt-1">users</span>
+              </div>
+            </div>
+
+            {/* Legend + exact numbers (also the readable version of the chart) */}
+            <ul className="space-y-1 text-sm">
+              {slices.map((s) => (
+                <li
+                  key={s.key}
+                  title={s.members ? s.members.join("\n") : `${s.pro_users} PRO · ${s.free_users} free`}
+                  onMouseEnter={() => setActive(s.key)}
+                  onMouseLeave={() => setActive(null)}
+                  className={`flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors ${
+                    active === s.key ? "bg-muted" : ""
+                  }`}
+                >
+                  <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: s.color }} />
+                  <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                  <span className="font-semibold tabular-nums">{s.users}</span>
+                  <span className="w-14 text-right text-muted-foreground tabular-nums">{s.share}%</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
         {withoutDepartment > 0 && (
