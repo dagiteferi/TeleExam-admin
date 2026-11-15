@@ -34,6 +34,7 @@ import {
   ShieldAlert,
   Check,
   Trash2,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -202,6 +203,13 @@ export default function UsersPage() {
 
   // Generic confirmation for PRO / full access / unban / reset actions
   const [confirmAction, setConfirmAction] = useState<ConfirmState | null>(null);
+
+  // Promo Referral Link
+  const [promoDialog, setPromoDialog] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
+  const [promoMessage, setPromoMessage] = useState(
+    "You'll get a special offer! Start exploring and make your Exit Exam preparation more effective with TeleExamAI!"
+  );
+  const [promoLoading, setPromoLoading] = useState(false);
 
   // Make Dual dialog — admin picks the second department
   const [dualDialog, setDualDialog] = useState<{ open: boolean; user: User | null; departmentId: string }>({
@@ -519,6 +527,29 @@ export default function UsersPage() {
   };
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+
+  const handleCreatePromo = async () => {
+    if (!promoDialog.user) return;
+    setPromoLoading(true);
+    try {
+      const res = await api.post("/admin/promo-referrals", {
+        user_id: promoDialog.user.id,
+        welcome_message: promoMessage,
+      });
+      const link = res.data?.bot_link || "";
+      if (link) {
+        await navigator.clipboard.writeText(link);
+        toast.success("Promo link created and copied to clipboard!");
+      } else {
+        toast.success("Promo link created!");
+      }
+      setPromoDialog({ open: false, user: null });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to create promo link");
+    } finally {
+      setPromoLoading(false);
+    }
+  };
   const currentPage = Math.floor(offset / LIMIT) + 1;
 
   return (
@@ -803,6 +834,24 @@ export default function UsersPage() {
                               <Unlock className="h-3 w-3" />
                             </Button>
                           ))}
+
+                        {/* Create Promo Link */}
+                        {isSuperadmin && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950"
+                            onClick={() => {
+                              setPromoDialog({ open: true, user });
+                              setPromoMessage(
+                                "You'll get a special offer! Start exploring and make your Exit Exam preparation more effective with TeleExamAI!"
+                              );
+                            }}
+                            title="Create promo referral link"
+                          >
+                            <Link2 className="h-3 w-3 mr-1" /> Promo
+                          </Button>
+                        )}
 
                         {/* Ban / Unban */}
                         {canBan &&
@@ -1549,6 +1598,71 @@ export default function UsersPage() {
             >
               {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete Forever
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Promo Referral Link Dialog */}
+      <Dialog open={promoDialog.open} onOpenChange={(o) => !o && !promoLoading && setPromoDialog({ open: false, user: null })}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-purple-500" /> Create Promo Referral Link
+            </DialogTitle>
+            <DialogDescription>
+              Create a special referral link for this user. New students who join via this link will see a personalized welcome message.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {promoDialog.user && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <p className="text-sm font-semibold">
+                  {[promoDialog.user.first_name, promoDialog.user.last_name].filter(Boolean).join(" ") || "User"}
+                </p>
+                {promoDialog.user.telegram_username && (
+                  <p className="text-xs text-muted-foreground">@{promoDialog.user.telegram_username}</p>
+                )}
+                <p className="text-xs text-muted-foreground">ID: {promoDialog.user.telegram_id}</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="promo_msg">Welcome Message</Label>
+              <p className="text-xs text-muted-foreground">
+                This appears after "Welcome [the student's full name], you are coming from @referrer's referral!"
+              </p>
+              <Textarea
+                id="promo_msg"
+                value={promoMessage}
+                onChange={(e) => setPromoMessage(e.target.value)}
+                rows={3}
+                className="resize-none"
+              />
+            </div>
+            {promoDialog.user && (
+              <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-4 py-3">
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-semibold mb-2">Preview:</p>
+                <p className="text-sm">
+                  <strong>Welcome to TeleExamAI, [student's full name]!</strong><br />
+                  We're glad to have you here!<br /><br />
+                  🤝 You joined TeleExamAI through a special invitation from <strong>
+                    {promoDialog.user.telegram_username
+                      ? `@${promoDialog.user.telegram_username}`
+                      : [promoDialog.user.first_name, promoDialog.user.last_name].filter(Boolean).join(" ") || "User"}
+                  </strong><br />
+                  🎁 <strong>A Special Offer Awaits You!</strong><br />
+                  {promoMessage}
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPromoDialog({ open: false, user: null })} disabled={promoLoading}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreatePromo} disabled={promoLoading}
+              className="bg-purple-600 hover:bg-purple-700 text-white">
+              {promoLoading && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              <Link2 className="h-4 w-4 mr-1" /> Create & Copy Link
             </Button>
           </DialogFooter>
         </DialogContent>

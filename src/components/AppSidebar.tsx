@@ -8,6 +8,7 @@ import {
   CreditCard,
   Megaphone,
   Settings,
+  Link2,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -42,6 +43,7 @@ const navItems: NavItem[] = [
   { title: "Users", url: "/users", icon: Users, permission: "view_users" },
   { title: "Exams", url: "/exams", icon: BookOpen, permission: "manage_content" },
   { title: "Admins", url: "/admins", icon: ShieldCheck, superAdminOnly: true },
+  { title: "Promo Links", url: "/promo-referrals", icon: Link2, superAdminOnly: true },
   { title: "Settings", url: "/settings", icon: Settings, superAdminOnly: true },
 ];
 

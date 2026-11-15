@@ -13,6 +13,7 @@ import ExamsPage from "@/pages/ExamsPage";
 import PaymentsPage from "@/pages/PaymentsPage";
 import AnnouncementsPage from "@/pages/AnnouncementsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import PromoReferralsPage from "@/pages/PromoReferralsPage";
 import NotFound from "@/pages/NotFound";
 
 const App = () => (
@@ -31,6 +32,7 @@ const App = () => (
             <Route path="/exams" element={<ProtectedRoute permission="manage_content"><ExamsPage /></ProtectedRoute>} />
             <Route path="/admins" element={<ProtectedRoute superAdminOnly><AdminsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute superAdminOnly><SettingsPage /></ProtectedRoute>} />
+            <Route path="/promo-referrals" element={<ProtectedRoute superAdminOnly><PromoReferralsPage /></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
