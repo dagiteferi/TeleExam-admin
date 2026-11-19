@@ -11,14 +11,24 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
-  ChevronDown,
-  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   ListChecks,
+  MoreHorizontal,
   Pencil,
+  Plus,
   Trash2,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -133,6 +143,14 @@ const STATUS_STYLE: Record<DeliveryStatus, { label: string; className: string }>
 // Keep in sync with MAX_ANNOUNCEMENT_LENGTH in the backend.
 const MAX_LENGTH = 3500;
 
+const PAGE_SIZE = 10;
+
+type StatusFilter = "all" | "sending" | "completed" | "failures";
+
+function isSending(a: Announcement): boolean {
+  return a.pending_count > 0 || a.updating_count > 0;
+}
+
 function audienceLabel(a: Announcement): string {
   if (a.audience === "department") return `Department · ${a.department_name || "deleted"}`;
   if (a.audience === "users") {
@@ -164,8 +182,12 @@ export default function AnnouncementsPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
   const [history, setHistory] = useState<Announcement[]>([]);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [listSearch, setListSearch] = useState("");
+  const [audienceFilter, setAudienceFilter] = useState<"all" | Audience>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [page, setPage] = useState(1);
   const [detailsFor, setDetailsFor] = useState<Announcement | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
@@ -268,6 +290,7 @@ export default function AnnouncementsPage() {
       const r = await api.post("/admin/announcements", { ...targetPayload(), text: text.trim() });
       toast.success(`📢 Announcement queued for ${r.data.recipient_count} user(s)`);
       setConfirmOpen(false);
+      setComposeOpen(false);
       setText("");
       fetchHistory();
     } catch (err) {
@@ -357,6 +380,25 @@ export default function AnnouncementsPage() {
   const canSend = text.trim().length > 0 && targetReady && !!recipients && !previewError;
   const selectedAudience = AUDIENCES.find((a) => a.value === audience);
 
+  // List filtering + pagination (client side; the history endpoint returns everything)
+  const q = listSearch.trim().toLowerCase();
+  const filtered = history.filter((a) => {
+    if (audienceFilter !== "all" && a.audience !== audienceFilter) return false;
+    if (statusFilter === "sending" && !isSending(a)) return false;
+    if (statusFilter === "completed" && isSending(a)) return false;
+    if (statusFilter === "failures" && a.failed_count === 0) return false;
+    if (q && !`${a.text} ${audienceLabel(a)} ${a.created_by || ""}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const sendingCount = history.filter(isSending).length;
+  const filtersActive = !!q || audienceFilter !== "all" || statusFilter !== "all";
+
+  // Any filter change jumps back to the first page
+  useEffect(() => setPage(1), [listSearch, audienceFilter, statusFilter]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -368,17 +410,24 @@ export default function AnnouncementsPage() {
             Send a message to your users through the bot. Users in an exam, AI chat or payment upload get it as soon as they finish.
           </p>
         </div>
-        <Button variant="outline" onClick={fetchHistory}>
-          <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={fetchHistory}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${historyLoading ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+          <Button onClick={() => setComposeOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> New announcement
+          </Button>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>New announcement</CardTitle>
-          <CardDescription>Plain text. Line breaks and emoji are kept.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* Composer */}
+      <Dialog open={composeOpen} onOpenChange={(open) => !sending && setComposeOpen(open)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>New announcement</DialogTitle>
+            <DialogDescription>Plain text. Line breaks and emoji are kept.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label>Send to</Label>
@@ -529,164 +578,275 @@ export default function AnnouncementsPage() {
               <Send className="mr-2 h-4 w-4" /> Send announcement
             </Button>
           </div>
-        </CardContent>
-      </Card>
+          </div>
+        </DialogContent>
+      </Dialog>
 
+      {/* Announcement list */}
       <Card>
-        <CardHeader>
-          <CardTitle>Sent announcements</CardTitle>
+        <CardHeader className="pb-3">
+          <CardTitle>
+            Sent announcements{" "}
+            <span className="text-sm font-normal text-muted-foreground">
+              ({history.length}
+              {sendingCount > 0 ? ` · ${sendingCount} sending` : ""})
+            </span>
+          </CardTitle>
           <CardDescription>
-            Counts update every few seconds while messages are waiting. Click a number to see exactly who it is.
+            Counts update every few seconds while messages are waiting. Click a row to read the full message and see who got it.
           </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {historyLoading && history.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Search message, audience or sender"
+                value={listSearch}
+                onChange={(e) => setListSearch(e.target.value)}
+              />
             </div>
-          ) : history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No announcements sent yet.</p>
-          ) : (
-            history.map((a) => {
-              const done = a.sent_count + a.failed_count + a.cancelled_count;
-              const isOpen = !!expanded[a.id];
-              const long = a.text.length > 220 || a.text.split("\n").length > 4;
-              return (
-                <div key={a.id} className="rounded-xl border bg-card overflow-hidden">
-                  {/* Header: audience, who and when */}
-                  <div className="flex items-center justify-between gap-2 flex-wrap border-b bg-muted/30 px-4 py-2.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="secondary" className="font-semibold">
-                        {audienceLabel(a)}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(a.created_at).toLocaleString()}
-                        {a.created_by ? ` · by ${a.created_by}` : ""}
-                      </span>
-                      {a.version > 1 && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Edited
-                        </Badge>
-                      )}
-                      {a.updating_count > 0 && (
-                        <span className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Loader2 className="h-3 w-3 animate-spin" /> Updating {a.updating_count} chat
-                          {a.updating_count === 1 ? "" : "s"}…
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {a.pending_count > 0 && (
-                        <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" onClick={() => handleCancel(a)}>
-                          <Ban className="mr-1 h-3.5 w-3.5" /> Stop sending
-                        </Button>
-                      )}
-                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openDetails(a)}>
-                        <ListChecks className="mr-1 h-3.5 w-3.5" /> Recipients
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(a)}>
-                        <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-xs text-destructive"
-                        onClick={() => setDeleting(a)}
-                      >
-                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* The message, as users see it */}
-                  <div className="px-4 py-3">
-                    <div className="rounded-lg border-l-4 border-primary bg-muted/40 px-3 py-2.5">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-                        📢 Announcement
-                      </p>
-                      <p className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${!isOpen && long ? "line-clamp-4" : ""}`}>
-                        {a.text}
-                      </p>
-                      {long && (
-                        <button
-                          type="button"
-                          className="mt-1 text-xs font-medium text-primary inline-flex items-center gap-0.5"
-                          onClick={() => setExpanded((e) => ({ ...e, [a.id]: !isOpen }))}
-                        >
-                          {isOpen ? (
-                            <>
-                              Show less <ChevronUp className="h-3 w-3" />
-                            </>
-                          ) : (
-                            <>
-                              Show full message <ChevronDown className="h-3 w-3" />
-                            </>
+            <Select value={audienceFilter} onValueChange={(v) => setAudienceFilter(v as typeof audienceFilter)}>
+              <SelectTrigger className="sm:w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All audiences</SelectItem>
+                {AUDIENCES.map((a) => (
+                  <SelectItem key={a.value} value={a.value}>
+                    {a.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+              <SelectTrigger className="sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any status</SelectItem>
+                <SelectItem value="sending">Sending</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="failures">Has failures</SelectItem>
+              </SelectContent>
+            </Select>
+            {filtersActive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setListSearch("");
+                  setAudienceFilter("all");
+                  setStatusFilter("all");
+                }}
+              >
+                <X className="mr-1 h-4 w-4" /> Clear
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead className="pl-6">Message</TableHead>
+                <TableHead className="w-44">Audience</TableHead>
+                <TableHead className="w-40">Sent</TableHead>
+                <TableHead className="w-56">Delivery</TableHead>
+                <TableHead className="w-12 pr-6" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {historyLoading && history.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
+                    <Loader2 className="mr-2 inline h-4 w-4 animate-spin" /> Loading…
+                  </TableCell>
+                </TableRow>
+              ) : pageItems.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
+                    {history.length === 0 ? "No announcements sent yet." : "No announcements match these filters."}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                pageItems.map((a) => {
+                  const done = a.sent_count + a.failed_count + a.cancelled_count;
+                  const notReceived = a.failed_count + a.cancelled_count;
+                  return (
+                    <TableRow key={a.id} className="cursor-pointer" onClick={() => openDetails(a)}>
+                      <TableCell className="pl-6 max-w-0">
+                        <p className="truncate text-sm font-medium" title={a.text}>
+                          {a.text.split("\n").find((l) => l.trim()) || a.text}
+                        </p>
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                          {a.version > 1 && (
+                            <Badge variant="outline" className="h-4 px-1 text-[10px]">
+                              Edited
+                            </Badge>
                           )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                          {a.updating_count > 0 && (
+                            <span className="flex items-center gap-1">
+                              <Loader2 className="h-3 w-3 animate-spin" /> Updating {a.updating_count}
+                            </span>
+                          )}
+                          <span>{a.text.length} chars</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="max-w-full truncate font-medium">
+                          {audienceLabel(a)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <p title={new Date(a.created_at).toLocaleString()}>{timeAgo(a.created_at)}</p>
+                        {a.created_by && <p className="truncate text-muted-foreground">by {a.created_by}</p>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <Progress
+                            value={a.recipient_count ? (done / a.recipient_count) * 100 : 100}
+                            className="h-1.5"
+                          />
+                          <div className="flex items-center gap-2.5 text-xs">
+                            <span className="flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400" title="Delivered">
+                              <CheckCircle2 className="h-3 w-3" />
+                              {a.sent_count}/{a.recipient_count}
+                            </span>
+                            {a.pending_count > 0 && (
+                              <span className="flex items-center gap-0.5 text-amber-700 dark:text-amber-400" title="Waiting">
+                                <Clock className="h-3 w-3" />
+                                {a.pending_count}
+                              </span>
+                            )}
+                            {notReceived > 0 && (
+                              <span className="flex items-center gap-0.5 text-destructive" title="Not received">
+                                <AlertTriangle className="h-3 w-3" />
+                                {notReceived}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="pr-6" onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Actions">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openDetails(a)}>
+                              <ListChecks className="mr-2 h-4 w-4" /> View & recipients
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEdit(a)}>
+                              <Pencil className="mr-2 h-4 w-4" /> Edit
+                            </DropdownMenuItem>
+                            {a.pending_count > 0 && (
+                              <DropdownMenuItem onClick={() => handleCancel(a)} className="text-destructive">
+                                <Ban className="mr-2 h-4 w-4" /> Stop sending
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setDeleting(a)} className="text-destructive">
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
 
-                  {/* Delivery summary */}
-                  <div className="px-4 pb-4 space-y-2.5">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>
-                        {done}/{a.recipient_count} processed
-                      </span>
-                      <span>{a.recipient_count ? Math.round((a.sent_count / a.recipient_count) * 100) : 0}% delivered</span>
-                    </div>
-                    <Progress value={a.recipient_count ? (done / a.recipient_count) * 100 : 100} className="h-2" />
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openDetails(a, "sent")}
-                        className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-left hover:bg-emerald-500/15"
-                      >
-                        <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Delivered
-                        </span>
-                        <span className="text-xl font-bold">{a.sent_count}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openDetails(a, "pending")}
-                        className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left hover:bg-amber-500/15"
-                      >
-                        <span className="flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                          <Clock className="h-3.5 w-3.5" /> Waiting
-                        </span>
-                        <span className="text-xl font-bold">{a.pending_count}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openDetails(a, "failed")}
-                        className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-left hover:bg-destructive/15"
-                      >
-                        <span className="flex items-center gap-1 text-[11px] font-medium text-destructive">
-                          <AlertTriangle className="h-3.5 w-3.5" /> Not received
-                        </span>
-                        <span className="text-xl font-bold">{a.failed_count + a.cancelled_count}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+          {filtered.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between border-t bg-muted/20 px-6 py-3">
+              <span className="text-xs text-muted-foreground">
+                {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of{" "}
+                {filtered.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage(currentPage - 1)}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Recipients dialog: who got it, who is waiting and why, who failed and why */}
+      {/* Details dialog: full message, then who got it, who is waiting and why, who failed and why */}
       <Dialog open={!!detailsFor} onOpenChange={(open) => !open && setDetailsFor(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ListChecks className="h-5 w-5 text-primary" /> Recipients
+              <Megaphone className="h-5 w-5 text-primary" /> Announcement
+              {detailsFor && detailsFor.version > 1 && (
+                <Badge variant="outline" className="text-[10px]">
+                  Edited
+                </Badge>
+              )}
             </DialogTitle>
             <DialogDescription>
-              {detailsFor ? `${audienceLabel(detailsFor)} · sent ${new Date(detailsFor.created_at).toLocaleString()}` : ""}
+              {detailsFor
+                ? `${audienceLabel(detailsFor)} · sent ${new Date(detailsFor.created_at).toLocaleString()}${
+                    detailsFor.created_by ? ` by ${detailsFor.created_by}` : ""
+                  }`
+                : ""}
             </DialogDescription>
           </DialogHeader>
+          {detailsFor && (
+            <div className="rounded-lg border-l-4 border-primary bg-muted/40 px-3 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto shrink-0">
+              {detailsFor.text}
+            </div>
+          )}
+          {detailsFor && (
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <Button size="sm" variant="outline" className="h-8" onClick={() => openEdit(detailsFor)}>
+                <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+              </Button>
+              {detailsFor.pending_count > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-destructive"
+                  onClick={() => handleCancel(detailsFor)}
+                >
+                  <Ban className="mr-1 h-3.5 w-3.5" /> Stop sending
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="h-8 text-destructive" onClick={() => setDeleting(detailsFor)}>
+                <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+              </Button>
+              {detailsFor.updating_count > 0 && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Updating {detailsFor.updating_count} chat
+                  {detailsFor.updating_count === 1 ? "" : "s"}…
+                </span>
+              )}
+            </div>
+          )}
           {detailsFor && (
             <Tabs value={deliveryFilter} onValueChange={(v) => setDeliveryFilter(v as typeof deliveryFilter)}>
               <TabsList className="grid grid-cols-4">
