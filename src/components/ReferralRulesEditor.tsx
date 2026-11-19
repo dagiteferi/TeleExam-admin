@@ -58,7 +58,7 @@ export function computeUnlocks(r: InvitationRules, invites: number, totalYears: 
   return { years, yearCap, freeYears, courses, courseCap, freeCourses, ai: r.free_ai_daily_limit + invites * r.ai_bonus_per_invite };
 }
 
-/** Smallest number of invites that reaches the invite maximum (years and courses). */
+
 function invitesToMax(r: InvitationRules, totalYears: number, totalCourses: number) {
   const { yearCap, courseCap } = computeUnlocks(r, 0, totalYears, totalCourses);
   for (let n = 0; n <= 500; n++) {

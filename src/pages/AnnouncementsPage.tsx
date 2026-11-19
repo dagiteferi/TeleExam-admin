@@ -32,7 +32,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -41,6 +40,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import AnnouncementEditor from "@/components/AnnouncementEditor";
+import { FormattedAnnouncement } from "@/lib/announcementFormat";
 
 type Audience = "all" | "pro" | "free" | "dual" | "department" | "users";
 
@@ -425,7 +426,9 @@ export default function AnnouncementsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New announcement</DialogTitle>
-            <DialogDescription>Plain text. Line breaks and emoji are kept.</DialogDescription>
+            <DialogDescription>
+              Use the toolbar for <b>bold</b>, <i>italic</i>, underline, links and more. Line breaks and emoji are kept.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -545,16 +548,12 @@ export default function AnnouncementsPage() {
 
           <div className="space-y-2">
             <Label>Message</Label>
-            <Textarea
-              rows={6}
-              maxLength={MAX_LENGTH}
-              placeholder="e.g. 🎓 New: Dual Degree! Study two departments with one account…"
+            <AnnouncementEditor
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={setText}
+              maxLength={MAX_LENGTH}
+              placeholder="e.g. 🎓 **New: Dual Degree!** Study two departments with one account…"
             />
-            <p className="text-[11px] text-muted-foreground text-right">
-              {text.length}/{MAX_LENGTH}
-            </p>
           </div>
 
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -676,7 +675,7 @@ export default function AnnouncementsPage() {
                     <TableRow key={a.id} className="cursor-pointer" onClick={() => openDetails(a)}>
                       <TableCell className="pl-6 max-w-0">
                         <p className="truncate text-sm font-medium" title={a.text}>
-                          {a.text.split("\n").find((l) => l.trim()) || a.text}
+                          <FormattedAnnouncement text={a.text.split("\n").find((l) => l.trim()) || a.text} />
                         </p>
                         <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                           {a.version > 1 && (
@@ -818,7 +817,7 @@ export default function AnnouncementsPage() {
           </DialogHeader>
           {detailsFor && (
             <div className="rounded-lg border-l-4 border-primary bg-muted/40 px-3 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto shrink-0">
-              {detailsFor.text}
+              <FormattedAnnouncement text={detailsFor.text} />
             </div>
           )}
           {detailsFor && (
@@ -891,7 +890,7 @@ export default function AnnouncementsPage() {
 
       {/* Edit: waiting users get the new text, delivered copies are edited in their chats */}
       <Dialog open={!!editing} onOpenChange={(open) => !open && !savingEdit && setEditing(null)}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit announcement</DialogTitle>
             <DialogDescription>
@@ -904,10 +903,7 @@ export default function AnnouncementsPage() {
                 : ""}
             </DialogDescription>
           </DialogHeader>
-          <Textarea rows={8} maxLength={MAX_LENGTH} value={editText} onChange={(e) => setEditText(e.target.value)} />
-          <p className="text-[11px] text-muted-foreground text-right">
-            {editText.length}/{MAX_LENGTH}
-          </p>
+          <AnnouncementEditor value={editText} onChange={setEditText} maxLength={MAX_LENGTH} rows={8} />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setEditing(null)} disabled={savingEdit}>
               Cancel
@@ -939,7 +935,7 @@ export default function AnnouncementsPage() {
           </DialogHeader>
           {deleting && (
             <div className="rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
-              {deleting.text}
+              <FormattedAnnouncement text={deleting.text} />
             </div>
           )}
           <DialogFooter>
@@ -969,7 +965,7 @@ export default function AnnouncementsPage() {
           </DialogHeader>
           <div className="rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">
             <p className="font-semibold mb-2">📢 Announcement</p>
-            {text.trim()}
+            <FormattedAnnouncement text={text.trim()} />
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={sending}>
