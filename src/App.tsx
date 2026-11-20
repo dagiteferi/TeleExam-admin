@@ -15,6 +15,7 @@ import AnnouncementsPage from "@/pages/AnnouncementsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import PromoReferralsPage from "@/pages/PromoReferralsPage";
 import NotFound from "@/pages/NotFound";
+import { g12Routes } from "@/g12/routes";
 
 const App = () => (
   <AuthProvider>
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="/settings" element={<ProtectedRoute superAdminOnly><SettingsPage /></ProtectedRoute>} />
             <Route path="/promo-referrals" element={<ProtectedRoute superAdminOnly><PromoReferralsPage /></ProtectedRoute>} />
           </Route>
+          {g12Routes}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
