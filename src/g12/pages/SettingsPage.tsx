@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage, g12Api } from "../api";
 import { Loading, PageHeader, useLoad } from "../components/kit";
+import MessageEditor from "../components/MessageEditor";
 
 interface Setting {
   key: string;
@@ -19,8 +20,10 @@ interface Setting {
 
 const GROUPS: Record<string, string> = {
   access: "Access", payment: "Price & payment", study: "Study", ai: "AI Tutor", protection: "Protection",
-  messages: "Messages",
+  messages: "Messages", community: "Telegram & TikTok",
 };
+
+const RICH_TEXT = new Set(["community.message", "community.reward_message"]);
 
 const LABELS: Record<string, [string, string]> = {
   "access.free_paper_years": ["Free exam years", "Oldest years of papers every free student can open."],
@@ -74,6 +77,12 @@ const LABELS: Record<string, [string, string]> = {
   "messages.welcome": ["Welcome message", "Sent once when a student starts the bot."],
   "messages.maintenance": ["Maintenance message", "When set, new sessions are paused and this is shown. Leave empty when not needed."],
   "messages.upgrade": ["Upgrade message", "Shown on the Upgrade to PRO screen."],
+  "community.telegram_channel": ["Telegram channel", "Public channel students must join, like @TeleExamAI. The bot must be an admin of this channel to check who joined. Leave empty to turn this step off."],
+  "community.telegram_required": ["Joining is required", "On: students can't use the bot until they join the channel. Off: the links are only suggested once."],
+  "community.tiktok_url": ["TikTok link", "Shown as a 'Follow us on TikTok' button. Following can't be checked, so it is never required. Leave empty to hide it."],
+  "community.message": ["Follow message", "Shown after the student chooses a stream, with the Join and Follow buttons."],
+  "community.reward_message": ["Reward message", "Shown once the student has joined the channel."],
+  "community.reward_pro_days": ["Reward: free PRO days", "Days of PRO given once for joining (0 = no PRO, only the reward message). Students who are already PRO get only the message."],
 };
 
 const isJson = (value: unknown) => typeof value === "object" && value !== null;
@@ -142,6 +151,9 @@ export default function G12SettingsPage() {
     const sample = setting.default ?? setting.value;
     if (typeof sample === "boolean") return <Switch checked={Boolean(current)} onCheckedChange={set} />;
     const text = typeof current === "string" && setting.key in edits ? current : toText(current);
+    if (RICH_TEXT.has(setting.key)) {
+      return <div className="w-full min-w-0 max-w-2xl"><MessageEditor value={text} onChange={set} maxLength={1000} rows={4} /></div>;
+    }
     if (setting.group === "messages") {
       return <Textarea rows={3} value={text} onChange={(e) => set(e.target.value)} className="max-w-xl" />;
     }
@@ -171,7 +183,7 @@ export default function G12SettingsPage() {
                 {settings.map((setting) => {
                   const [label, help] = LABELS[setting.key] ?? [setting.key, ""];
                   return (
-                    <div key={setting.key} className="grid gap-2 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                    <div key={setting.key} className={`grid gap-2 p-4 ${RICH_TEXT.has(setting.key) ? "" : "md:grid-cols-[1fr_auto] md:items-center"}`}>
                       <div>
                         <p className="font-medium text-sm">{label}{setting.key in edits && <span className="text-primary"> •</span>}</p>
                         <p className="text-xs text-muted-foreground">{help} <code className="ml-1">{setting.key}</code></p>
