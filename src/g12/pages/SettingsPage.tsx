@@ -37,7 +37,7 @@ const LABELS: Record<string, [string, string]> = {
   "invites.min_answers_to_count": ["Answers before an invite counts", "0 = counts as soon as the friend picks a stream."],
   "price.amount": ["PRO price", "Shown in the bot and on lock pop-ups."],
   "price.currency": ["Currency", "Three letters, e.g. ETB."],
-  "pro.period": ["PRO period", 'JSON: {"type": "until_date", "value": "2027-07-31"} or {"type": "days", "value": 90}.'],
+  "pro.period": ["PRO period", 'How long PRO lasts after a payment is approved. Lifetime: {"type": "lifetime"}. A date: {"type": "until_date", "value": "2027-07-31"}. Days: {"type": "days", "value": 90}.'],
   "support.contact": ["Support contact", "Telegram username shown to students."],
   "practice.default_count": ["Questions per practice", "Used when a student starts practice."],
   "practice.count_choices": ["Practice size choices", "JSON list, e.g. [10, 20, 30]."],

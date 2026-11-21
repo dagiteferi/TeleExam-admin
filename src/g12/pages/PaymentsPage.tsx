@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, ExternalLink, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,10 +17,12 @@ interface Payment {
   id: string;
   telegram_id: number;
   first_name: string | null;
+  last_name: string | null;
   username: string | null;
+  stream: string | null;
   amount: string;
   currency: string;
-  reference: string;
+  reference: string | null;
   bank_name: string | null;
   status: string;
   rejection_reason: string | null;
@@ -45,17 +48,27 @@ const REJECT_REASONS = [
   "This receipt was already used",
 ];
 
-const student = (p: Payment) => p.first_name || (p.username ? `@${p.username}` : String(p.telegram_id));
+const STREAMS: Record<string, string> = { natural: "Natural Science", social: "Social Science" };
+const student = (p: Payment) => [p.first_name, p.last_name].filter(Boolean).join(" ")
+  || (p.username ? `@${p.username}` : String(p.telegram_id));
+const handle = (p: Payment) => `${p.username ? `@${p.username} · ` : ""}ID ${p.telegram_id}`;
+
+function StreamBadge({ stream }: { stream: string | null }) {
+  if (!stream) return <span className="text-muted-foreground">Not chosen</span>;
+  return <Badge variant={stream === "natural" ? "default" : "secondary"}>{STREAMS[stream] ?? stream}</Badge>;
+}
 
 function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose: () => void; onDone: () => void }) {
   const { data, loading } = useLoad(async () => (await g12Api.get<Payment>(`/payments/${payment.id}`)).data, [payment.id]);
   const [until, setUntil] = useState("");
+  const [lifetime, setLifetime] = useState(true);
   const [reason, setReason] = useState("");
   const pending = payment.status === "pending";
 
   const approve = async () => {
-    const body = until ? { pro_until: new Date(`${until}T23:59:59`).toISOString() } : {};
-    if (await run(() => g12Api.post(`/payments/${payment.id}/approve`, body), "Approved. The student is now PRO.")) onDone();
+    const body = lifetime ? { lifetime: true } : { pro_until: new Date(`${until}T23:59:59`).toISOString() };
+    const done = lifetime ? "Approved. The student now has lifetime PRO." : "Approved. The student is now PRO.";
+    if (await run(() => g12Api.post(`/payments/${payment.id}/approve`, body), done)) onDone();
   };
   const reject = async () => {
     if (await run(() => g12Api.post(`/payments/${payment.id}/reject`, { reason }), "Rejected. The student was told why.")) onDone();
@@ -68,10 +81,12 @@ function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose:
         {loading || !data ? <Loading /> : (
           <div className="space-y-3 text-sm">
             <div className="grid grid-cols-2 gap-2">
+              <span className="text-muted-foreground">Student</span><span className="font-medium">{student(data)}</span>
+              <span className="text-muted-foreground">Telegram</span><span>{handle(data)}</span>
+              <span className="text-muted-foreground">Stream</span><span><StreamBadge stream={data.stream} /></span>
               <span className="text-muted-foreground">Amount</span><span>{data.amount} {data.currency}</span>
               <span className="text-muted-foreground">Bank</span><span>{data.bank_name ?? "—"}</span>
-              <span className="text-muted-foreground">Reference</span><span className="font-mono">{data.reference}</span>
-              <span className="text-muted-foreground">Telegram ID</span><span>{data.telegram_id}</span>
+              {data.reference && <><span className="text-muted-foreground">Reference</span><span className="font-mono">{data.reference}</span></>}
               <span className="text-muted-foreground">Sent</span><span>{when(data.created_at)}</span>
               <span className="text-muted-foreground">Status</span><span><StatusBadge value={data.status} /></span>
             </div>
@@ -83,10 +98,14 @@ function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose:
             ) : <p className="text-muted-foreground">Receipt picture is not available.</p>}
             {pending && (
               <div className="space-y-3 border-t pt-3">
-                <div className="space-y-1">
-                  <Label>PRO until (optional)</Label>
-                  <Input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
-                  <p className="text-xs text-muted-foreground">Leave empty to use the PRO period from Settings.</p>
+                <div className="space-y-2">
+                  <Label>PRO length</Label>
+                  <div className="flex gap-2">
+                    <Button type="button" size="sm" variant={lifetime ? "default" : "outline"} onClick={() => setLifetime(true)}>Lifetime</Button>
+                    <Button type="button" size="sm" variant={lifetime ? "outline" : "default"} onClick={() => setLifetime(false)}>Until a date</Button>
+                  </div>
+                  {lifetime ? <p className="text-xs text-muted-foreground">PRO never ends for this student.</p>
+                    : <Input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />}
                 </div>
                 <div className="space-y-2">
                   <Label>Reason (needed to reject; the student sees it)</Label>
@@ -105,7 +124,7 @@ function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose:
         {pending && (
           <DialogFooter className="gap-2">
             <Button variant="destructive" disabled={reason.trim().length < 3} onClick={reject}><X className="h-4 w-4 mr-1" />Reject</Button>
-            <Button onClick={approve}><Check className="h-4 w-4 mr-1" />Approve</Button>
+            <Button disabled={!lifetime && !until} onClick={approve}><Check className="h-4 w-4 mr-1" />Approve</Button>
           </DialogFooter>
         )}
       </DialogContent>
@@ -247,15 +266,15 @@ export default function G12PaymentsPage() {
         <CardContent className="p-0">
           {loading ? <Loading /> : !data?.length ? <Empty text={`No ${status} payments.`} /> : (
             <Table>
-              <TableHeader><TableRow><TableHead>Student</TableHead><TableHead>Amount</TableHead><TableHead>Bank</TableHead>
-                <TableHead>Reference</TableHead><TableHead>Sent</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Student</TableHead><TableHead>Stream</TableHead><TableHead>Amount</TableHead>
+                <TableHead>Bank</TableHead><TableHead>Sent</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader>
               <TableBody>
                 {data.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell>{student(p)}</TableCell>
+                    <TableCell><p className="font-medium">{student(p)}</p><p className="text-xs text-muted-foreground">{handle(p)}</p></TableCell>
+                    <TableCell><StreamBadge stream={p.stream} /></TableCell>
                     <TableCell>{p.amount} {p.currency}</TableCell>
                     <TableCell>{p.bank_name ?? "—"}</TableCell>
-                    <TableCell className="font-mono">{p.reference}</TableCell>
                     <TableCell>{when(p.created_at)}</TableCell>
                     <TableCell><StatusBadge value={p.status} /></TableCell>
                     <TableCell><Button size="sm" variant="outline" onClick={() => setOpen(p)}>{p.status === "pending" ? "Review" : "View"}</Button></TableCell>
