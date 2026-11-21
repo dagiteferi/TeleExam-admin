@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { Check, ExternalLink, Plus, X } from "lucide-react";
+import { Check, ExternalLink, Plus, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { g12Api } from "../api";
+import { errorMessage, g12Api } from "../api";
 import { Empty, Loading, PageHeader, StatusBadge, run, useLoad, when } from "../components/kit";
 
 interface Payment {
@@ -35,6 +36,14 @@ interface Bank {
   is_active: boolean;
   sort: number;
 }
+
+const REJECT_REASONS = [
+  "This is not a payment receipt",
+  "The amount paid is incorrect",
+  "The screenshot is unclear or cropped",
+  "Payment was sent to the wrong account",
+  "This receipt was already used",
+];
 
 const student = (p: Payment) => p.first_name || (p.username ? `@${p.username}` : String(p.telegram_id));
 
@@ -79,9 +88,14 @@ function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose:
                   <Input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
                   <p className="text-xs text-muted-foreground">Leave empty to use the PRO period from Settings.</p>
                 </div>
-                <div className="space-y-1">
-                  <Label>Reason (needed to reject)</Label>
-                  <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. The amount on the receipt is wrong" />
+                <div className="space-y-2">
+                  <Label>Reason (needed to reject; the student sees it)</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {REJECT_REASONS.map((r) => (
+                      <Button key={r} type="button" size="sm" variant={reason === r ? "default" : "outline"} onClick={() => setReason(r)}>{r}</Button>
+                    ))}
+                  </div>
+                  <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Choose one above or type your own" />
                 </div>
               </div>
             )}
@@ -99,14 +113,19 @@ function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose:
   );
 }
 
+const EMPTY_BANK = { bank_name: "", account_name: "", account_number: "" };
+
 function BankAccounts() {
   const { data, loading, reload } = useLoad(async () => (await g12Api.get<Bank[]>("/bank-accounts")).data);
-  const [form, setForm] = useState({ bank_name: "", account_name: "", account_number: "" });
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState(EMPTY_BANK);
   const [editing, setEditing] = useState<Bank | null>(null);
+  const [removing, setRemoving] = useState<Bank | null>(null);
 
   const add = async () => {
-    if (await run(() => g12Api.post("/bank-accounts", form), "Bank account added.")) {
-      setForm({ bank_name: "", account_name: "", account_number: "" });
+    if (await run(() => g12Api.post("/bank-accounts", form), "Bank account added. Students see it on the Upgrade screen.")) {
+      setForm(EMPTY_BANK);
+      setAdding(false);
       reload();
     }
   };
@@ -123,17 +142,35 @@ function BankAccounts() {
     if (await run(() => g12Api.patch(`/bank-accounts/${bank.id}`, { is_active: !bank.is_active }),
       bank.is_active ? "Hidden from students." : "Shown to students.")) reload();
   };
+  const remove = async () => {
+    if (!removing) return;
+    try {
+      const { data: result } = await g12Api.delete<{ deleted: boolean }>(`/bank-accounts/${removing.id}`);
+      toast.success(result.deleted ? "Bank account deleted." : "This account has payments, so it was hidden instead of deleted.");
+      setRemoving(null);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+  const field = (key: keyof typeof EMPTY_BANK, label: string, placeholder: string) => (
+    <div className="space-y-1"><Label>{label}</Label>
+      <Input placeholder={placeholder} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} /></div>
+  );
 
   return (
     <Card className="mt-6">
-      <CardHeader><CardTitle className="text-base">Bank accounts shown on the Upgrade screen</CardTitle></CardHeader>
-      <CardContent className="space-y-4">
-        {loading ? <Loading /> : (
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-base">Bank accounts shown on the Upgrade screen</CardTitle>
+        <Button size="sm" onClick={() => setAdding(true)}><Plus className="h-4 w-4 mr-1" />Add bank account</Button>
+      </CardHeader>
+      <CardContent>
+        {loading && !data ? <Loading /> : !data?.length ? <Empty text="No bank accounts yet. Students cannot pay until you add one." /> : (
           <Table>
             <TableHeader><TableRow><TableHead>Bank</TableHead><TableHead>Account name</TableHead><TableHead>Number</TableHead>
               <TableHead>Order</TableHead><TableHead>Shown</TableHead><TableHead /></TableRow></TableHeader>
             <TableBody>
-              {(data ?? []).map((bank) => editing?.id === bank.id ? (
+              {data.map((bank) => editing?.id === bank.id ? (
                 <TableRow key={bank.id}>
                   <TableCell><Input value={editing.bank_name} onChange={(e) => setEditing({ ...editing, bank_name: e.target.value })} /></TableCell>
                   <TableCell><Input value={editing.account_name} onChange={(e) => setEditing({ ...editing, account_name: e.target.value })} /></TableCell>
@@ -150,19 +187,45 @@ function BankAccounts() {
                   <TableCell className="font-mono">{bank.account_number}</TableCell>
                   <TableCell>{bank.sort}</TableCell>
                   <TableCell><Switch checked={bank.is_active} onCheckedChange={() => toggle(bank)} /></TableCell>
-                  <TableCell><Button size="sm" variant="outline" onClick={() => setEditing(bank)}>Edit</Button></TableCell>
+                  <TableCell className="space-x-2 whitespace-nowrap">
+                    <Button size="sm" variant="outline" onClick={() => setEditing(bank)}>Edit</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setRemoving(bank)}>
+                      <Trash2 className="h-4 w-4 mr-1" />Delete</Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-        <div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto] items-end border-t pt-4">
-          <div className="space-y-1"><Label>Bank</Label><Input placeholder="CBE" value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} /></div>
-          <div className="space-y-1"><Label>Account name</Label><Input value={form.account_name} onChange={(e) => setForm({ ...form, account_name: e.target.value })} /></div>
-          <div className="space-y-1"><Label>Account number</Label><Input value={form.account_number} onChange={(e) => setForm({ ...form, account_number: e.target.value })} /></div>
-          <Button disabled={!form.bank_name || !form.account_name || !form.account_number} onClick={add}><Plus className="h-4 w-4 mr-1" />Add</Button>
-        </div>
       </CardContent>
+      <Dialog open={adding} onOpenChange={setAdding}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Add bank account</DialogTitle>
+            <DialogDescription>Students see this account on the Upgrade to PRO screen.</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            {field("bank_name", "Bank", "CBE")}
+            {field("account_name", "Account holder name", "Full name on the account")}
+            {field("account_number", "Account number", "1000…")}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdding(false)}>Cancel</Button>
+            <Button disabled={!form.bank_name || !form.account_name || !form.account_number} onClick={add}>Add account</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!removing} onOpenChange={(open) => !open && setRemoving(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Delete {removing?.bank_name} account?</DialogTitle>
+            <DialogDescription>
+              {removing?.account_name} · {removing?.account_number}. Students will no longer see it.
+              If payments already used this account, it is hidden instead of deleted.
+            </DialogDescription></DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={remove}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
