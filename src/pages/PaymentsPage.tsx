@@ -14,6 +14,8 @@ import {
   Loader2,
   ShieldAlert,
   ZoomIn,
+  History,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,12 +44,42 @@ interface PaymentRequest {
   id: string;
   user_id: string;
   screenshot_url: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "cancelled";
   rejection_reason: string | null;
   kind: "pro" | "dual_department";
   target_department_name: string | null;
   amount_birr: number | null;
+  // Times the user tried to upload another receipt while this one was pending
+  blocked_attempts?: number;
   created_at: string;
+}
+
+// One entry of GET /admin/payments/users/{user_id}/events
+interface PaymentEvent {
+  id: string;
+  request_id: string | null;
+  action: string;
+  kind: "pro" | "dual_department";
+  actor: string;
+  detail: string | null;
+  created_at: string;
+}
+
+const EVENT_LABELS: Record<string, { label: string; className: string }> = {
+  submitted: { label: "Uploaded a receipt", className: "text-primary" },
+  cancelled: { label: "Cancelled their receipt", className: "text-muted-foreground" },
+  blocked_pending: { label: "Tried to upload again while pending", className: "text-amber-600" },
+  blocked_limit: { label: "Blocked: daily upload limit reached", className: "text-destructive" },
+  blocked_file: { label: "Blocked: invalid or too-large file", className: "text-destructive" },
+  approved: { label: "Approved", className: "text-green-600" },
+  rejected: { label: "Rejected", className: "text-destructive" },
+};
+
+function statusVariant(status: PaymentRequest["status"]): "default" | "destructive" | "secondary" | "outline" {
+  if (status === "approved") return "default";
+  if (status === "rejected") return "destructive";
+  if (status === "cancelled") return "outline";
+  return "secondary";
 }
 
 // Subset of GET /admin/users/{user_id} used to describe the receipt sender
@@ -123,6 +155,7 @@ export default function PaymentsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTargets, setDeleteTargets] = useState<PaymentRequest[] | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [events, setEvents] = useState<PaymentEvent[] | "loading" | "error">([]);
 
   // Add Bank State
   const [openAddBank, setOpenAddBank] = useState(false);
@@ -168,6 +201,21 @@ export default function PaymentsPage() {
   useEffect(() => {
     setRejectReason("");
   }, [confirmDecision]);
+
+  // Payment history of the user whose receipt is open
+  useEffect(() => {
+    if (!selectedRequest) return;
+    let cancelled = false;
+    setEvents("loading");
+    axios
+      .get(`${API_BASE}/admin/payments/users/${selectedRequest.user_id}/events`, authHeaders)
+      .then((res) => !cancelled && setEvents(res.data))
+      .catch(() => !cancelled && setEvents("error"));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRequest?.id]);
 
   // Load each receipt sender's profile once from the existing user detail endpoint
   useEffect(() => {
@@ -461,6 +509,14 @@ export default function PaymentsPage() {
                             <span className="font-semibold text-destructive">Reason:</span> {req.rejection_reason}
                           </p>
                         )}
+                        {req.status === "cancelled" && (
+                          <p className="mt-1 text-xs text-muted-foreground">Cancelled by the user (to send a new receipt).</p>
+                        )}
+                        {!!req.blocked_attempts && req.status === "pending" && (
+                          <p className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                            <RotateCcw className="h-3 w-3" /> Tried to upload again {req.blocked_attempts}×: waiting for review
+                          </p>
+                        )}
                       </div>
 
                       <div className="w-40 shrink-0 space-y-1">
@@ -468,16 +524,7 @@ export default function PaymentsPage() {
                         <p className="text-xs text-muted-foreground">{new Date(req.created_at).toLocaleString()}</p>
                       </div>
 
-                      <Badge
-                        className="w-20 shrink-0 justify-center capitalize"
-                        variant={
-                          req.status === "approved"
-                            ? "default"
-                            : req.status === "rejected"
-                            ? "destructive"
-                            : "secondary"
-                        }
-                      >
+                      <Badge className="w-20 shrink-0 justify-center capitalize" variant={statusVariant(req.status)}>
                         {req.status}
                       </Badge>
 
@@ -660,15 +707,7 @@ export default function PaymentsPage() {
               Payment Receipt
               {selectedRequest && <PaymentKindBadge request={selectedRequest} />}
               {selectedRequest && (
-                <Badge
-                  variant={
-                    selectedRequest.status === "approved"
-                      ? "default"
-                      : selectedRequest.status === "rejected"
-                      ? "destructive"
-                      : "secondary"
-                  }
-                >
+                <Badge variant={statusVariant(selectedRequest.status)} className="capitalize">
                   {selectedRequest.status}
                 </Badge>
               )}
@@ -796,6 +835,44 @@ export default function PaymentsPage() {
                         </DetailRow>
                       </div>
                     </div>
+                  )}
+
+                  <h4 className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
+                    <History className="h-3.5 w-3.5" /> Payment history of this user
+                  </h4>
+                  {events === "loading" ? (
+                    <div className="flex items-center gap-2 text-muted-foreground text-xs">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading history...
+                    </div>
+                  ) : events === "error" ? (
+                    <p className="text-xs text-muted-foreground">Could not load the payment history.</p>
+                  ) : events.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No recorded actions yet.</p>
+                  ) : (
+                    <ul className="rounded-lg border divide-y text-xs max-h-64 overflow-y-auto">
+                      {events.map((ev) => {
+                        const meta = EVENT_LABELS[ev.action] || { label: ev.action, className: "" };
+                        return (
+                          <li key={ev.id} className="px-3 py-2 space-y-0.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`font-medium ${meta.className}`}>
+                                {meta.label}
+                                {ev.kind === "dual_department" ? " (Dual)" : ""}
+                                {ev.request_id === selectedRequest.id ? " · this receipt" : ""}
+                              </span>
+                              <span className="text-muted-foreground shrink-0">{new Date(ev.created_at).toLocaleString()}</span>
+                            </div>
+                            {(ev.actor !== "user" || ev.detail) && (
+                              <p className="text-muted-foreground">
+                                {ev.actor !== "user" ? `By ${ev.actor.replace(/^admin:/, "")}` : ""}
+                                {ev.actor !== "user" && ev.detail ? " · " : ""}
+                                {ev.detail}
+                              </p>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
                   )}
                 </div>
               </div>
