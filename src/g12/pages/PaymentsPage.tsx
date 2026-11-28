@@ -29,7 +29,28 @@ interface Payment {
   created_at: string;
   reviewed_at: string | null;
   receipt_url?: string | null;
+  // Times the student tried to send another receipt while this one was pending
+  blocked_attempts?: number;
 }
+
+// One line of GET /payments/{id}/history: everything the student did with payments
+interface PaymentEvent {
+  id: number;
+  payment_id: string | null;
+  action: string;
+  actor: string;
+  detail: string | null;
+  created_at: string;
+}
+
+const EVENT_LABELS: Record<string, { label: string; className: string }> = {
+  submitted: { label: "Sent a receipt", className: "text-primary" },
+  cancelled: { label: "Cancelled their receipt", className: "text-muted-foreground" },
+  blocked_pending: { label: "Tried to send again while pending", className: "text-amber-600" },
+  blocked_limit: { label: "Blocked: daily receipt limit reached", className: "text-destructive" },
+  approved: { label: "Approved", className: "text-green-600" },
+  rejected: { label: "Rejected", className: "text-destructive" },
+};
 
 interface Bank {
   id: string;
@@ -60,6 +81,8 @@ function StreamBadge({ stream }: { stream: string | null }) {
 
 function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose: () => void; onDone: () => void }) {
   const { data, loading } = useLoad(async () => (await g12Api.get<Payment>(`/payments/${payment.id}`)).data, [payment.id]);
+  const history = useLoad(async () =>
+    (await g12Api.get<PaymentEvent[]>(`/payments/${payment.id}/history`)).data, [payment.id]);
   const [until, setUntil] = useState("");
   const [lifetime, setLifetime] = useState(true);
   const [reason, setReason] = useState("");
@@ -119,6 +142,37 @@ function ReviewDialog({ payment, onClose, onDone }: { payment: Payment; onClose:
               </div>
             )}
             {data.rejection_reason && <p className="text-destructive">Rejected: {data.rejection_reason}</p>}
+            {data.status === "cancelled" && (
+              <p className="text-muted-foreground">The student cancelled this receipt to send a new one.</p>
+            )}
+            <div className="space-y-1 border-t pt-3">
+              <Label>Payment history of this student</Label>
+              {history.loading ? <Loading /> : !history.data?.length ? (
+                <p className="text-xs text-muted-foreground">No recorded actions yet.</p>
+              ) : (
+                <ul className="rounded border divide-y text-xs max-h-48 overflow-y-auto">
+                  {history.data.map((ev) => {
+                    const meta = EVENT_LABELS[ev.action] ?? { label: ev.action, className: "" };
+                    const byAdmin = ev.actor.startsWith("admin:");
+                    return (
+                      <li key={ev.id} className="px-2 py-1.5">
+                        <div className="flex justify-between gap-2">
+                          <span className={`font-medium ${meta.className}`}>
+                            {meta.label}{ev.payment_id === payment.id ? " · this receipt" : ""}
+                          </span>
+                          <span className="text-muted-foreground shrink-0">{when(ev.created_at)}</span>
+                        </div>
+                        {(byAdmin || ev.detail) && (
+                          <p className="text-muted-foreground">
+                            {byAdmin ? `By ${ev.actor.slice(6)}` : ""}{byAdmin && ev.detail ? " · " : ""}{ev.detail}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
         )}
         {pending && (
@@ -260,7 +314,7 @@ export default function G12PaymentsPage() {
       <PageHeader title="Payments" description="Check receipts, approve PRO, and manage the bank accounts students pay to." />
       <Tabs value={status} onValueChange={setStatus}>
         <TabsList><TabsTrigger value="pending">Pending</TabsTrigger><TabsTrigger value="approved">Approved</TabsTrigger>
-          <TabsTrigger value="rejected">Rejected</TabsTrigger></TabsList>
+          <TabsTrigger value="rejected">Rejected</TabsTrigger><TabsTrigger value="cancelled">Cancelled</TabsTrigger></TabsList>
       </Tabs>
       <Card className="mt-4">
         <CardContent className="p-0">
@@ -271,7 +325,12 @@ export default function G12PaymentsPage() {
               <TableBody>
                 {data.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell><p className="font-medium">{student(p)}</p><p className="text-xs text-muted-foreground">{handle(p)}</p></TableCell>
+                    <TableCell>
+                      <p className="font-medium">{student(p)}</p><p className="text-xs text-muted-foreground">{handle(p)}</p>
+                      {!!p.blocked_attempts && p.status === "pending" && (
+                        <p className="text-xs font-medium text-amber-600">Tried to send again {p.blocked_attempts}×: waiting for review</p>
+                      )}
+                    </TableCell>
                     <TableCell><StreamBadge stream={p.stream} /></TableCell>
                     <TableCell>{p.amount} {p.currency}</TableCell>
                     <TableCell>{p.bank_name ?? "—"}</TableCell>
